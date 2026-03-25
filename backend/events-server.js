@@ -41,7 +41,7 @@ const {
   parseTopicListCsv
 } = require("./topic-classifier");
 
-const PORT = Number(process.env.ANALYTICS_SERVER_PORT || 8787);
+const PORT = Number(process.env.PORT || process.env.ANALYTICS_SERVER_PORT || 8787);
 const DB_PATH =
   process.env.ANALYTICS_DB_PATH ||
   path.join(__dirname, "analytics-events.db");
