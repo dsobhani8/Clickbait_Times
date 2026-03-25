@@ -1,0 +1,98 @@
+[
+  {
+    "id": "pol-001",
+    "category": "Politics",
+    "title": "City Transit Funding Talks Resume After Weeks of Budget Gridlock",
+    "topicLabel": "Local Government",
+    "publishedMinutesAgo": 42,
+    "lead": "State and city leaders returned to negotiations on a transit rescue package after service cuts drew opposition from commuters and business groups.",
+    "body": [
+      "Lawmakers reopened negotiations on a funding plan for the regional transit system on Thursday, reviving talks that had stalled over how to split costs between the state and the city.",
+      "The transit authority warned earlier this month that, without additional support, it would reduce service frequency on several commuter lines and delay repairs scheduled for the summer.",
+      "Business groups and labor unions have both pushed for a deal, arguing that unreliable service is already affecting worker attendance and downtown foot traffic.",
+      "Officials involved in the talks said the latest proposal includes a mix of temporary operating support and a longer-term review of fares, tolls, and dedicated tax revenue.",
+      "No final agreement was announced, but negotiators said they expect to continue discussions through the weekend."
+    ],
+    "image": "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&w=1400&q=80"
+  },
+  {
+    "id": "eco-001",
+    "category": "Economy",
+    "title": "Small Businesses Add Hiring Plans Despite Higher Borrowing Costs",
+    "topicLabel": "Jobs & Inflation",
+    "publishedMinutesAgo": 75,
+    "lead": "A new survey shows modest confidence among small firms, with owners citing steady consumer demand even as financing remains expensive.",
+    "body": [
+      "Small business owners reported slightly stronger hiring intentions this month, according to a nationwide survey released Thursday.",
+      "Respondents said customer demand has remained resilient in food services, personal care, and home maintenance, helping offset pressure from higher interest rates.",
+      "At the same time, many firms reported delaying equipment purchases and expansion plans because loans remain costly and cash flow is tighter than a year ago.",
+      "Economists said the report points to a mixed environment in which labor demand can stay firm while investment slows.",
+      "The survey also found that price increases are moderating, though wage competition remains a challenge in several service industries."
+    ],
+    "image": "https://images.unsplash.com/photo-1520607162513-77705c0f0d4a?auto=format&fit=crop&w=1400&q=80"
+  },
+  {
+    "id": "us-001",
+    "category": "US",
+    "title": "Storm Recovery Crews Restore Power to Most Gulf Coast Neighborhoods",
+    "topicLabel": "Severe Weather",
+    "publishedMinutesAgo": 118,
+    "lead": "Utilities said restoration efforts are nearing completion, though some coastal communities still face flooding and road closures.",
+    "body": [
+      "Utility companies said they have restored electricity to most customers affected by this week's storm system along the Gulf Coast.",
+      "Emergency officials cautioned that floodwater remains on roads in low-lying areas, and several school districts announced delayed openings.",
+      "Residents in the hardest-hit communities are still waiting for debris removal and inspections before they can return to damaged homes.",
+      "State agencies said they are coordinating with local governments on temporary shelter capacity and cleanup contracts.",
+      "Weather forecasters expect calmer conditions over the next two days, which could speed up repair work and reopen transportation routes."
+    ],
+    "image": "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=1400&q=80"
+  },
+  {
+    "id": "world-001",
+    "category": "World",
+    "title": "Regional Summit Opens With Focus on Shipping Security and Food Prices",
+    "topicLabel": "Trade & Diplomacy",
+    "publishedMinutesAgo": 134,
+    "lead": "Leaders from twelve countries began talks on maritime disruptions, inflation pressures, and emergency grain shipments.",
+    "body": [
+      "A regional summit opened Thursday with leaders emphasizing shipping security and the impact of transport disruptions on food prices.",
+      "Delegates said they will discuss joint patrol coordination, insurance costs for cargo routes, and contingency planning for agricultural exports.",
+      "Several countries arrived with proposals to expand emergency grain reserves after recent delays raised prices in import-dependent markets.",
+      "Analysts said the meeting is unlikely to produce a single binding agreement, but could establish common protocols for information sharing.",
+      "The summit is scheduled to continue through Friday, with a final statement expected in the evening."
+    ],
+    "image": "https://images.unsplash.com/photo-1467269204594-9661b134dd2b?auto=format&fit=crop&w=1400&q=80"
+  },
+  {
+    "id": "life-001",
+    "category": "Lifestyle",
+    "title": "Neighborhood Libraries Expand Evening Programs for Adults and Teens",
+    "topicLabel": "Community Life",
+    "publishedMinutesAgo": 181,
+    "lead": "Public libraries are adding workshops, study halls, and language classes as demand rises for low-cost evening activities.",
+    "body": [
+      "Library systems in several cities are expanding evening programming to include career workshops, homework support, and language classes.",
+      "Librarians said attendance has grown steadily over the past year, particularly for events designed for teens and working adults.",
+      "Some branches are partnering with community colleges and nonprofit groups to provide instructors and digital learning resources.",
+      "Officials said the expansion is part of a broader effort to keep libraries accessible as multifunction community spaces.",
+      "Program organizers expect to add more sessions this spring if staffing and grant funding remain stable."
+    ],
+    "image": "https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=1400&q=80"
+  },
+  {
+    "id": "sports-001",
+    "category": "Sports",
+    "title": "Late Defensive Stop Seals Playoff Spot in Tight Conference Race",
+    "topicLabel": "Basketball",
+    "publishedMinutesAgo": 203,
+    "lead": "A final-minute block and two free throws helped secure a postseason berth as teams jockey for seeding.",
+    "body": [
+      "A late defensive stop preserved a narrow win Thursday night and clinched a playoff spot for the home team in a crowded conference race.",
+      "The game remained close throughout the second half, with both teams trading short runs and frequent lead changes.",
+      "Coaches pointed to turnovers and second-chance rebounds as key factors in the closing minutes.",
+      "With the result, the standings tighten further around the middle seeds heading into the final stretch of the regular season.",
+      "Players said the team will focus on recovery and film study before its next matchup this weekend."
+    ],
+    "image": "https://images.unsplash.com/photo-1546519638-68e109498ffc?auto=format&fit=crop&w=1400&q=80"
+  }
+]

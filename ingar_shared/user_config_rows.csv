@@ -1,0 +1,10 @@
+id,created_at,user_id,slant,complexity,sentiment,entertainment,show_slant,show_complexity,show_sentiment,show_entertainment,order
+39,2024-05-07 15:13:03.825787+00,user_2g913nycxJXlAJuYDnFRhzEJ23d,50,0,0,0,true,true,true,true,
+34,2024-05-04 17:57:17.507097+00,user_2g0rf4MAyMDvUQSGjelanxWm1ba,50,0,0,0,true,true,true,true,
+35,2024-05-06 05:20:02.464948+00,user_2g51oklRG5K4Jw7OHYKRSaYLCXZ,50,0,0,0,true,true,true,true,
+32,2024-05-04 15:06:21.129971+00,user_2g0WsAvAse8XaWs9cUrPrlIs3uq,50,0,0,0,true,true,true,true,
+33,2024-05-04 15:11:45.760084+00,user_2g0XWvlLvSUT1xsW1jkbkp4orYi,50,0,0,0,true,true,true,true,"[0, 1, 2, 3]"
+38,2024-05-07 14:54:20.735822+00,user_2fvB9y7IeaXVbRY8tfNgvplLjfH,0,0,0,0,true,true,true,true,
+36,2024-05-06 06:17:19.144591+00,user_2g58mZznf8ETmURduCDI7IrE3LM,50,100,0,0,true,true,true,true,
+24,2024-05-02 12:45:01.417366+00,user_2fubEqFupXMtlGz9D2mSCro6Upu,50,0,100,0,true,true,true,true,
+37,2024-05-06 20:33:46.296866+00,user_2g6owFZEWj02UuYkys7FSBVNWbM,50,100,0,0,true,true,true,true,

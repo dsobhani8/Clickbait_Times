@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "TailorMadeTimes Prototype",
+    "slug": "tailor-made-times-prototype",
+    "version": "1.0.0",
+    "scheme": "tailormadetimes",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ]
+  }
+}

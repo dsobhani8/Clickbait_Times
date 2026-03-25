@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Variant Dashboard</title>
+    <style>
+      :root {
+        --bg: #f5f6f8;
+        --panel: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --line: #d1d5db;
+        --accent: #0f766e;
+        --accent-soft: #ccfbf1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--text);
+        background: linear-gradient(180deg, #f5f6f8 0%, #eceff3 100%);
+      }
+      .shell {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .top {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+      .sub {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .controls {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(8, minmax(120px, 1fr));
+        gap: 10px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .field input,
+      .field select,
+      button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+        background: #fff;
+      }
+      .field.compact {
+        justify-content: flex-end;
+      }
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        min-height: 39px;
+        background: #fff;
+        color: #111827;
+        font-size: 13px;
+      }
+      .toggle input {
+        margin: 0;
+      }
+      button {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        opacity: 0.94;
+      }
+      #status {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .snapshot-meta {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .grid {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .k {
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-radius: 999px;
+        padding: 4px 8px;
+      }
+      .method {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .meta-pill {
+        font-size: 11px;
+        color: #374151;
+        background: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        border-radius: 999px;
+        padding: 3px 8px;
+        white-space: nowrap;
+      }
+      .title {
+        margin-top: 8px;
+        font-size: 17px;
+        line-height: 1.3;
+        font-weight: 700;
+      }
+      .lead {
+        margin-top: 8px;
+        color: #1f2937;
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      .body {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .body p {
+        margin: 0;
+        color: #111827;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .diff-insert {
+        background: #dcfce7;
+        border-radius: 4px;
+      }
+      .diff-delete {
+        background: #fee2e2;
+        color: #991b1b;
+        text-decoration: line-through;
+        border-radius: 4px;
+      }
+      .diff-note {
+        color: #b45309 !important;
+        background: #fef3c7;
+        border-radius: 6px;
+        padding: 6px;
+      }
+      .reference-chip {
+        font-size: 11px;
+        color: #0f766e;
+        font-weight: 700;
+      }
+      .delta {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      @media (max-width: 1024px) {
+        .controls {
+          grid-template-columns: repeat(2, minmax(120px, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="top">
+        <h1>Article Variant Dashboard</h1>
+        <div class="sub">Load a snapshot and inspect original, regular, neutral, and clickbait versions side-by-side.</div>
+
+        <div class="controls">
+          <div class="field">
+            <label for="date">Snapshot Date (UTC)</label>
+            <input id="date" type="date" />
+          </div>
+          <div class="field">
+            <label for="snapshot">Snapshot</label>
+            <select id="snapshot"></select>
+          </div>
+          <div class="field">
+            <label for="article">Article</label>
+            <select id="article"></select>
+          </div>
+          <div class="field">
+            <label for="referenceVariant">Reference</label>
+            <select id="referenceVariant"></select>
+          </div>
+          <div class="field compact">
+            <label>Diff</label>
+            <label class="toggle">
+              <input id="highlightToggle" type="checkbox" checked />
+              Highlight changes
+            </label>
+          </div>
+          <div class="field compact">
+            <label>Deletes</label>
+            <label class="toggle">
+              <input id="showDeletesToggle" type="checkbox" />
+              Show removed text
+            </label>
+          </div>
+          <div class="field">
+            <label for="load">Snapshot</label>
+            <button id="load" type="button">Load Date</button>
+          </div>
+          <div class="field">
+            <label for="openApi">API</label>
+            <button id="openApi" type="button">Open JSON</button>
+          </div>
+        </div>
+
+        <div id="status">Ready.</div>
+        <div id="snapshotMeta" class="snapshot-meta"></div>
+      </section>
+
+      <section id="cards" class="grid"></section>
+    </main>
+
+    <script>
+      const dateInput = document.getElementById("date");
+      const snapshotSelect = document.getElementById("snapshot");
+      const articleSelect = document.getElementById("article");
+      const referenceVariantSelect = document.getElementById("referenceVariant");
+      const highlightToggle = document.getElementById("highlightToggle");
+      const showDeletesToggle = document.getElementById("showDeletesToggle");
+      const loadButton = document.getElementById("load");
+      const openApiButton = document.getElementById("openApi");
+      const statusEl = document.getElementById("status");
+      const snapshotMetaEl = document.getElementById("snapshotMeta");
+      const cardsEl = document.getElementById("cards");
+
+      const localNow = new Date();
+      dateInput.value = new Date(localNow.getTime() - localNow.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 10);
+
+      let snapshot = null;
+      const fixedCardOrder = ["original", "regular", "facts_only", "clickbait"];
+      let variantOrder = [...fixedCardOrder];
+      let currentVariants = null;
+      let currentVariantMeta = null;
+      let currentSourceArticle = null;
+
+      function getVariantDisplayName(key) {
+        if (key === "original") return "original";
+        if (key === "regular") return "regular";
+        if (key === "facts_only") return "neutral (facts_only)";
+        if (key === "clickbait") return "clickbait";
+        return key;
+      }
+
+      function sourceArticleToVariant(sourceArticle) {
+        if (!sourceArticle || typeof sourceArticle !== "object") {
+          return null;
+        }
+        const body = Array.isArray(sourceArticle.body)
+          ? sourceArticle.body.filter((entry) => typeof entry === "string")
+          : [];
+        return {
+          title: typeof sourceArticle.title === "string" ? sourceArticle.title : "",
+          lead: typeof sourceArticle.lead === "string" ? sourceArticle.lead : "",
+          body
+        };
+      }
+
+      function variantForKey(key, variants, sourceArticle) {
+        if (key === "original") {
+          return sourceArticleToVariant(sourceArticle);
+        }
+        return variants && variants[key] ? variants[key] : null;
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      async function fetchJson(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`${response.status} ${response.statusText}: ${text}`);
+        }
+        return response.json();
+      }
+
+      function buildSnapshotsByDateUrl() {
+        const date = encodeURIComponent(dateInput.value);
+        return `/feed/snapshots?date=${date}`;
+      }
+
+      function buildSnapshotByIdUrl(snapshotId) {
+        return `/feed/snapshot/${encodeURIComponent(snapshotId)}`;
+      }
+
+      function setArticleOptions(articles) {
+        articleSelect.innerHTML = "";
+        for (const article of articles) {
+          const option = document.createElement("option");
+          option.value = article.id;
+          option.textContent = `${article.id} | ${article.title}`;
+          articleSelect.appendChild(option);
+        }
+      }
+
+      function setSnapshotOptions(snapshots) {
+        snapshotSelect.innerHTML = "";
+        for (const snapshotRow of snapshots) {
+          const option = document.createElement("option");
+          option.value = String(snapshotRow.snapshotId);
+          option.textContent = `#${snapshotRow.snapshotId} | ${snapshotRow.category} | limit ${snapshotRow.limit} | ${snapshotRow.articleCount} articles`;
+          snapshotSelect.appendChild(option);
+        }
+      }
+
+      function setReferenceOptions(variants, sourceArticle) {
+        referenceVariantSelect.innerHTML = "";
+        const keys = variantOrder.filter((key) =>
+          Boolean(variantForKey(key, variants, sourceArticle))
+        );
+        for (const key of keys) {
+          const option = document.createElement("option");
+          option.value = key;
+          option.textContent = getVariantDisplayName(key);
+          referenceVariantSelect.appendChild(option);
+        }
+        if (keys.includes("original")) {
+          referenceVariantSelect.value = "original";
+        } else if (keys.includes("regular")) {
+          referenceVariantSelect.value = "regular";
+        } else if (keys.includes("facts_only")) {
+          referenceVariantSelect.value = "facts_only";
+        } else if (keys.length > 0) {
+          referenceVariantSelect.value = keys[0];
+        }
+      }
+
+      function tokenize(text) {
+        const value = typeof text === "string" ? text : "";
+        try {
+          return value.match(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]|\s+/gu) || [];
+        } catch {
+          return value.match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]|\s+/g) || [];
+        }
+      }
+
+      function isVisibleToken(token) {
+        return /\S/.test(token || "");
+      }
+
+      function isWordLikeToken(token) {
+        try {
+          return /[\p{L}\p{N}_]/u.test(token || "");
+        } catch {
+          return /[A-Za-z0-9_]/.test(token || "");
+        }
+      }
+
+      function countWordsFromVariant(variant) {
+        if (!variant || typeof variant !== "object") {
+          return 0;
+        }
+        const body = Array.isArray(variant.body) ? variant.body : [];
+        const text = [variant.title || "", variant.lead || "", ...body].join(" ");
+        return tokenize(text).filter((token) => isWordLikeToken(token)).length;
+      }
+
+      function diffTokens(referenceText, variantText) {
+        const a = tokenize(referenceText);
+        const b = tokenize(variantText);
+        const m = a.length;
+        const n = b.length;
+        const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+        for (let i = 1; i <= m; i += 1) {
+          for (let j = 1; j <= n; j += 1) {
+            if (a[i - 1] === b[j - 1]) {
+              dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+              dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+          }
+        }
+
+        const ops = [];
+        let i = m;
+        let j = n;
+        while (i > 0 && j > 0) {
+          if (a[i - 1] === b[j - 1]) {
+            ops.push({ type: "equal", token: a[i - 1] });
+            i -= 1;
+            j -= 1;
+          } else if (dp[i][j - 1] >= dp[i - 1][j]) {
+            ops.push({ type: "insert", token: b[j - 1] });
+            j -= 1;
+          } else {
+            ops.push({ type: "delete", token: a[i - 1] });
+            i -= 1;
+          }
+        }
+        while (i > 0) {
+          ops.push({ type: "delete", token: a[i - 1] });
+          i -= 1;
+        }
+        while (j > 0) {
+          ops.push({ type: "insert", token: b[j - 1] });
+          j -= 1;
+        }
+        ops.reverse();
+
+        const merged = [];
+        for (const op of ops) {
+          const last = merged[merged.length - 1];
+          if (last && last.type === op.type) {
+            last.text += op.token;
+          } else {
+            merged.push({ type: op.type, text: op.token });
+          }
+        }
+        return merged;
+      }
+
+      function buildDiffHtml(referenceText, variantText, showDeletes) {
+        const ops = diffTokens(referenceText, variantText);
+        let changedVisible = 0;
+        let totalVisible = 0;
+        const html = [];
+
+        for (const op of ops) {
+          if (op.type === "equal") {
+            html.push(escapeHtml(op.text));
+            totalVisible += tokenize(op.text).filter(isVisibleToken).length;
+            continue;
+          }
+          if (op.type === "insert") {
+            html.push(`<span class="diff-insert">${escapeHtml(op.text)}</span>`);
+            const count = tokenize(op.text).filter(isVisibleToken).length;
+            changedVisible += count;
+            totalVisible += count;
+            continue;
+          }
+          if (op.type === "delete") {
+            const count = tokenize(op.text).filter(isVisibleToken).length;
+            changedVisible += count;
+            if (showDeletes) {
+              html.push(`<span class="diff-delete">${escapeHtml(op.text)}</span>`);
+            }
+          }
+        }
+
+        return {
+          html: html.join(""),
+          changedVisible,
+          totalVisible
+        };
+      }
+
+      function renderCards(variants, variantMeta, sourceArticle) {
+        cardsEl.innerHTML = "";
+        const referenceKey = referenceVariantSelect.value || "regular";
+        const referenceVariant = variantForKey(referenceKey, variants, sourceArticle);
+        const highlight = highlightToggle.checked;
+        const showDeletes = showDeletesToggle.checked;
+
+        for (const key of variantOrder) {
+          const variant = variantForKey(key, variants, sourceArticle);
+          if (!variant) continue;
+
+          const method =
+            key === "original"
+              ? "source_original_v1"
+              : variantMeta && variantMeta[key]
+                ? variantMeta[key].rewriteMethod
+                : null;
+          const createdAt =
+            key === "original"
+              ? null
+              : variantMeta && variantMeta[key]
+                ? variantMeta[key].createdAt
+                : null;
+          const body = Array.isArray(variant.body) ? variant.body : [];
+          const wordCount = countWordsFromVariant(variant);
+          const referenceBody =
+            referenceVariant && Array.isArray(referenceVariant.body)
+              ? referenceVariant.body
+              : [];
+          const isReference = key === referenceKey;
+
+          let bodyHtml = "";
+          let changedVisibleTotal = 0;
+          let visibleTotal = 0;
+          const paragraphCount = Math.max(body.length, referenceBody.length);
+          for (let i = 0; i < paragraphCount; i += 1) {
+            const currentParagraph = body[i] || "";
+            const referenceParagraph = referenceBody[i] || "";
+
+            if (!highlight || isReference) {
+              if (currentParagraph) {
+                bodyHtml += `<p>${escapeHtml(currentParagraph)}</p>`;
+              } else if (referenceParagraph) {
+                bodyHtml += `<p class="diff-note">[Paragraph omitted vs reference]</p>`;
+              }
+              continue;
+            }
+
+            if (!currentParagraph && referenceParagraph) {
+              bodyHtml += `<p class="diff-note">[Paragraph omitted vs reference]</p>`;
+              if (showDeletes) {
+                const diffDeleted = buildDiffHtml(referenceParagraph, "", true);
+                bodyHtml += `<p>${diffDeleted.html}</p>`;
+                changedVisibleTotal += diffDeleted.changedVisible;
+                visibleTotal += diffDeleted.totalVisible;
+              }
+              continue;
+            }
+
+            const diff = buildDiffHtml(referenceParagraph, currentParagraph, showDeletes);
+            changedVisibleTotal += diff.changedVisible;
+            visibleTotal += diff.totalVisible;
+            bodyHtml += `<p>${diff.html}</p>`;
+          }
+
+          let titleHtml = escapeHtml(variant.title || "");
+          let leadHtml = escapeHtml(variant.lead || "");
+          if (highlight && !isReference && referenceVariant) {
+            const titleDiff = buildDiffHtml(referenceVariant.title || "", variant.title || "", showDeletes);
+            const leadDiff = buildDiffHtml(referenceVariant.lead || "", variant.lead || "", showDeletes);
+            titleHtml = titleDiff.html;
+            leadHtml = leadDiff.html;
+            changedVisibleTotal += titleDiff.changedVisible + leadDiff.changedVisible;
+            visibleTotal += titleDiff.totalVisible + leadDiff.totalVisible;
+          }
+
+          const deltaPct =
+            visibleTotal > 0 ? Math.round((changedVisibleTotal / visibleTotal) * 100) : 0;
+
+          const card = document.createElement("article");
+          card.className = "card";
+          card.innerHTML = `
+            <div class="card-head">
+              <span class="k">${escapeHtml(getVariantDisplayName(key))}</span>
+              <span class="meta-pill">${wordCount} words</span>
+            </div>
+            <div class="method">${escapeHtml(method || "unknown")}</div>
+            <div class="title">${titleHtml}</div>
+            <div class="lead">${leadHtml}</div>
+            <div class="body">
+              ${bodyHtml}
+            </div>
+            <div class="delta">${isReference ? '<span class="reference-chip">reference</span>' : `change vs ${escapeHtml(referenceKey)}: ${deltaPct}%`}</div>
+            <div class="method">${createdAt ? `updated ${escapeHtml(createdAt)}` : ""}</div>
+          `;
+          cardsEl.appendChild(card);
+        }
+      }
+
+      async function loadVariantOrder() {
+        try {
+          const health = await fetchJson("/health");
+          if (Array.isArray(health.allVariantKeys) && health.allVariantKeys.length > 0) {
+            variantOrder = fixedCardOrder.filter((key) =>
+              key === "original" || health.allVariantKeys.includes(key)
+            );
+          }
+        } catch {
+          // Keep fallback order.
+        }
+      }
+
+      async function loadSnapshotsForDate() {
+        setStatus("Loading snapshots for date...");
+        cardsEl.innerHTML = "";
+        snapshotMetaEl.textContent = "";
+        try {
+          const data = await fetchJson(buildSnapshotsByDateUrl());
+          const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+          if (snapshots.length === 0) {
+            snapshotSelect.innerHTML = "";
+            articleSelect.innerHTML = "";
+            setStatus(`No snapshots found for ${dateInput.value}.`);
+            return;
+          }
+          setSnapshotOptions(snapshots);
+          snapshotSelect.value = String(snapshots[0].snapshotId);
+          await loadSnapshotById(snapshotSelect.value);
+        } catch (error) {
+          setStatus(`Snapshot list load failed: ${error.message}`);
+        }
+      }
+
+      async function loadSnapshotById(snapshotIdValue) {
+        const snapshotId = Number(snapshotIdValue);
+        if (!Number.isFinite(snapshotId) || snapshotId <= 0) {
+          setStatus("Select a valid snapshot.");
+          return;
+        }
+        setStatus(`Loading snapshot #${snapshotId}...`);
+        cardsEl.innerHTML = "";
+        try {
+          const data = await fetchJson(buildSnapshotByIdUrl(snapshotId));
+          snapshot = data;
+          setArticleOptions(data.articles || []);
+          snapshotMetaEl.textContent = `snapshotId=${data.snapshotId} date=${data.snapshotDate} category=${data.category} limit=${data.limit} provider=${data.provider} articles=${data.count}`;
+          setStatus("Snapshot loaded. Select an article.");
+          if (articleSelect.value) {
+            await loadArticleVariants();
+          }
+        } catch (error) {
+          setStatus(`Snapshot load failed: ${error.message}`);
+        }
+      }
+
+      async function loadArticleVariants() {
+        if (!snapshot || !snapshot.snapshotId || !articleSelect.value) {
+          return;
+        }
+        setStatus("Loading variants...");
+        try {
+          currentSourceArticle = Array.isArray(snapshot.articles)
+            ? snapshot.articles.find((article) => String(article.id) === String(articleSelect.value)) || null
+            : null;
+          const articleId = encodeURIComponent(articleSelect.value);
+          const data = await fetchJson(
+            `/feed/snapshot/${snapshot.snapshotId}/article/${articleId}/variants`
+          );
+          currentVariants = data.variants || {};
+          currentVariantMeta = data.variantMeta || {};
+          setReferenceOptions(currentVariants, currentSourceArticle);
+          renderCards(currentVariants, currentVariantMeta, currentSourceArticle);
+          setStatus(`Loaded variants for article ${articleSelect.value}.`);
+        } catch (error) {
+          setStatus(`Variant load failed: ${error.message}`);
+        }
+      }
+
+      loadButton.addEventListener("click", loadSnapshotsForDate);
+      snapshotSelect.addEventListener("change", async () => {
+        await loadSnapshotById(snapshotSelect.value);
+      });
+      articleSelect.addEventListener("change", loadArticleVariants);
+      referenceVariantSelect.addEventListener("change", () => {
+        if (currentVariants) {
+          renderCards(currentVariants, currentVariantMeta || {}, currentSourceArticle);
+        }
+      });
+      highlightToggle.addEventListener("change", () => {
+        if (currentVariants) {
+          renderCards(currentVariants, currentVariantMeta || {}, currentSourceArticle);
+        }
+      });
+      showDeletesToggle.addEventListener("change", () => {
+        if (currentVariants) {
+          renderCards(currentVariants, currentVariantMeta || {}, currentSourceArticle);
+        }
+      });
+      openApiButton.addEventListener("click", () => {
+        if (snapshot && snapshot.snapshotId) {
+          window.open(buildSnapshotByIdUrl(snapshot.snapshotId), "_blank");
+          return;
+        }
+        window.open(buildSnapshotsByDateUrl(), "_blank");
+      });
+
+      (async function init() {
+        await loadVariantOrder();
+        await loadSnapshotsForDate();
+      })();
+    </script>
+  </body>
+</html>

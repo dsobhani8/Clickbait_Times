@@ -1,0 +1,10 @@
+  node_modules/
+  .expo/
+  backend/analytics-events.db
+  backend/*.db
+  .env
+  .env.*
+  .DS_Store
+  *.log
+  EOF
+
