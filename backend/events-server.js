@@ -30,6 +30,7 @@ const {
   VALID_ARMS,
   getClickbaitExperimentAssignment
 } = require("./experiments");
+const { normalizeProlificPid } = require("./participant-identity");
 const {
   TOPIC_CLASSIFIER_MODEL,
   TOPIC_CLASSIFIER_PROFILE,
@@ -252,6 +253,19 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_rewrite_jobs_status_snapshot
     ON rewrite_jobs(status, snapshot_id);
+  CREATE TABLE IF NOT EXISTS participant_accounts (
+    prolific_pid TEXT PRIMARY KEY,
+    auth_user_id TEXT NOT NULL UNIQUE,
+    login_email TEXT NOT NULL UNIQUE,
+    experiment_arm TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    password_issued_at TEXT NOT NULL,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_participant_accounts_auth_user
+    ON participant_accounts(auth_user_id);
 `);
 
 function ensureColumn(tableName, columnDefinition) {
@@ -289,6 +303,88 @@ async function pgQuery(sql, params = [], client = null) {
     return client.query(sql, params);
   }
   return pgPool.query(sql, params);
+}
+
+async function getParticipantAccountByAuthUserId(authUserId) {
+  if (typeof authUserId !== "string" || authUserId.trim().length === 0) {
+    return null;
+  }
+  const normalizedAuthUserId = authUserId.trim();
+  if (!POSTGRES_ENABLED) {
+    const row = db
+      .prepare(
+        `
+          SELECT
+            prolific_pid,
+            auth_user_id,
+            login_email,
+            experiment_arm,
+            status,
+            password_issued_at,
+            metadata_json,
+            created_at,
+            updated_at
+          FROM participant_accounts
+          WHERE auth_user_id = @authUserId
+          LIMIT 1
+        `
+      )
+      .get({ authUserId: normalizedAuthUserId });
+    if (!row) {
+      return null;
+    }
+    return {
+      prolificPid: row.prolific_pid,
+      authUserId: row.auth_user_id,
+      loginEmail: row.login_email,
+      experimentArm: row.experiment_arm,
+      status: row.status,
+      passwordIssuedAt: row.password_issued_at,
+      metadata:
+        typeof row.metadata_json === "string" && row.metadata_json.length > 0
+          ? JSON.parse(row.metadata_json)
+          : {},
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  const result = await pgQuery(
+    `
+      SELECT
+        prolific_pid,
+        auth_user_id,
+        login_email,
+        experiment_arm,
+        status,
+        password_issued_at,
+        metadata_json,
+        created_at,
+        updated_at
+      FROM participant_accounts
+      WHERE auth_user_id = $1
+      LIMIT 1
+    `,
+    [normalizedAuthUserId]
+  );
+  const row = Array.isArray(result.rows) && result.rows.length > 0 ? result.rows[0] : null;
+  if (!row) {
+    return null;
+  }
+  return {
+    prolificPid: row.prolific_pid,
+    authUserId: row.auth_user_id,
+    loginEmail: row.login_email,
+    experimentArm: row.experiment_arm,
+    status: row.status,
+    passwordIssuedAt: row.password_issued_at,
+    metadata:
+      typeof row.metadata_json === "string" && row.metadata_json.length > 0
+        ? JSON.parse(row.metadata_json)
+        : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }
 
 async function ensurePostgresSchema() {
@@ -409,6 +505,19 @@ async function ensurePostgresSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_rewrite_jobs_status_snapshot
       ON rewrite_jobs(status, snapshot_id);
+    CREATE TABLE IF NOT EXISTS participant_accounts (
+      prolific_pid TEXT PRIMARY KEY,
+      auth_user_id TEXT NOT NULL UNIQUE,
+      login_email TEXT NOT NULL UNIQUE,
+      experiment_arm TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      password_issued_at TEXT NOT NULL,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_participant_accounts_auth_user
+      ON participant_accounts(auth_user_id);
   `);
 
   await pgQuery(`
@@ -3094,19 +3203,29 @@ app.get("/dashboard/variants", (_req, res) => {
   return res.sendFile(path.join(__dirname, "public", "variants-dashboard.html"));
 });
 
-app.get("/config", (req, res) => {
+app.get("/config", async (req, res) => {
   const userId =
     typeof req.query.userId === "string" && req.query.userId.trim().length > 0
       ? req.query.userId.trim()
       : "anonymous";
-  const experiment = getClickbaitExperimentAssignment({ userId });
+  const participantAccount = await getParticipantAccountByAuthUserId(userId);
+  const experiment = getClickbaitExperimentAssignment({
+    userId,
+    participantArm: participantAccount?.experimentArm ?? ""
+  });
 
   return res.json({
     ok: true,
     userId,
     appEdition: "clickbait_shell",
     experiment,
-    availableArms: VALID_ARMS
+    availableArms: VALID_ARMS,
+    participantAccount: participantAccount
+      ? {
+          prolificPid: normalizeProlificPid(participantAccount.prolificPid),
+          status: participantAccount.status
+        }
+      : null
   });
 });
 
@@ -3134,10 +3253,15 @@ app.post("/admin/pipeline/run", async (req, res) => {
   const limit = Number.isFinite(limitRaw) && limitRaw > 0
     ? Math.max(1, Math.min(50, Math.round(limitRaw)))
     : null;
+  const rebuildRequested =
+    String(req.body?.rebuild ?? req.query.rebuild ?? "").trim() === "1";
 
   const url = new URL(`http://127.0.0.1:${PORT}/feed`);
   url.searchParams.set("category", category);
   url.searchParams.set("refresh", "1");
+  if (rebuildRequested) {
+    url.searchParams.set("rebuild", "1");
+  }
   if (Number.isFinite(limit) && limit > 0) {
     url.searchParams.set("limit", String(limit));
   }
@@ -3157,6 +3281,7 @@ app.post("/admin/pipeline/run", async (req, res) => {
       triggeredAt: new Date().toISOString(),
       category,
       limit,
+      rebuildRequested,
       result: payload
     });
   } catch (error) {
@@ -3218,6 +3343,7 @@ app.get("/feed", async (req, res) => {
   const limit = isTopicBalancedRequest ? balancedLimit : requestedLimit;
   const perTopicTarget = isTopicBalancedRequest ? FEED_PER_TOPIC_TARGET : 1;
   const refreshRequested = String(req.query.refresh || "") === "1";
+  const rebuildRequested = String(req.query.rebuild || "") === "1";
   const cacheKey = `${category}::${limit}`;
   const provider = "newsapi_ai";
   const snapshotDate = utcDayStamp();
@@ -3369,7 +3495,7 @@ app.get("/feed", async (req, res) => {
     }
   }
 
-  if (refreshRequested) {
+  if (refreshRequested && !rebuildRequested) {
     const existingTodaySnapshotRow = await findSnapshotRecordByDate({
       snapshotDate,
       category,
@@ -3424,6 +3550,7 @@ app.get("/feed", async (req, res) => {
           snapshotDate: existingTodaySnapshot.snapshotDate,
           toneRewriteQueued: false,
           refreshRequested: true,
+          rebuildRequested: false,
           alreadyReady: true,
           topicTargets: requestedTopicTargets,
           perTopicTarget,
@@ -3798,6 +3925,7 @@ app.get("/feed", async (req, res) => {
         toneRewriteQueued,
         rewriteJobStats: rewriteStats,
         refreshRequested,
+        rebuildRequested,
         topicTargets: requestedTopicTargets,
         perTopicTarget,
         countsByTopic: responseCountsByTopic,
