@@ -36,7 +36,7 @@ function assignArmForUser(userId) {
   return { arm, bucket, userId: normalizedUserId };
 }
 
-function getClickbaitExperimentAssignment({ userId } = {}) {
+function getClickbaitExperimentAssignment({ userId, participantArm } = {}) {
   const normalizedUserId = normalizeUserId(userId);
   const fixedArm = FIXED_TEST_USER_ASSIGNMENTS[normalizedUserId];
   if (fixedArm) {
@@ -44,6 +44,17 @@ function getClickbaitExperimentAssignment({ userId } = {}) {
       experimentKey: EXPERIMENT_KEY,
       arm: fixedArm,
       source: "test_fixed",
+      bucket: null,
+      userId: normalizedUserId
+    };
+  }
+
+  const normalizedParticipantArm = normalizeArm(participantArm || "");
+  if (normalizedParticipantArm) {
+    return {
+      experimentKey: EXPERIMENT_KEY,
+      arm: normalizedParticipantArm,
+      source: "participant_account",
       bucket: null,
       userId: normalizedUserId
     };

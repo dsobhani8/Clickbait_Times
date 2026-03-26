@@ -16,6 +16,8 @@
     "analytics:summary": "node backend/events-summary.js",
     "analytics:tailor": "node backend/events-tailor.js",
     "feed:refresh": "node backend/feed-refresh.js",
+    "participants:provision": "node backend/provision-prolific-users.js",
+    "participants:smoke": "node backend/provision-prolific-users-smoke.js",
     "rewrite:regular:test": "node backend/rewrite-regular-smoke.js",
     "feed:snapshot": "node backend/snapshot-query.js",
     "start": "expo start",

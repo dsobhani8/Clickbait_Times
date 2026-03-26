@@ -7,10 +7,16 @@ import {
   useState,
   type ReactNode
 } from "react";
+import {
+  buildParticipantLoginEmail,
+  normalizeProlificPid,
+  parseParticipantLoginEmail
+} from "../utils/participantIdentity";
 
 type AuthUser = {
   id: string;
   email: string | null;
+  loginId: string | null;
 };
 
 type StoredAuthSession = {
@@ -25,8 +31,7 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   user: AuthUser | null;
   accessToken: string | null;
-  sendOtp: (email: string) => Promise<void>;
-  verifyOtp: (email: string, token: string) => Promise<void>;
+  signInWithPassword: (loginId: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -68,33 +73,20 @@ function parseApiError(payload: unknown, fallback: string) {
   return maybeMessage || fallback;
 }
 
-function shouldRetryOtpAsSignup(payload: unknown) {
-  if (!isRecord(payload)) {
-    return false;
+function resolveLoginId(user: Record<string, unknown> | null, email: string | null) {
+  const metadata = user && isRecord(user.user_metadata) ? user.user_metadata : null;
+  const metadataLoginId =
+    metadata &&
+    (typeof metadata.prolific_pid === "string"
+      ? metadata.prolific_pid
+      : typeof metadata.login_id === "string"
+        ? metadata.login_id
+        : "");
+  const normalizedMetadataLoginId = normalizeProlificPid(metadataLoginId || "");
+  if (normalizedMetadataLoginId) {
+    return normalizedMetadataLoginId;
   }
-  const raw =
-    (typeof payload.error_description === "string" && payload.error_description) ||
-    (typeof payload.msg === "string" && payload.msg) ||
-    (typeof payload.message === "string" && payload.message) ||
-    (typeof payload.error === "string" && payload.error) ||
-    "";
-  const message = raw.toLowerCase();
-  return (
-    message.includes("user not found") ||
-    message.includes("no user found") ||
-    message.includes("not found")
-  );
-}
-
-function normalizeOtpToken(tokenRaw: string) {
-  if (typeof tokenRaw !== "string") {
-    return "";
-  }
-  return tokenRaw
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/\s+/g, "")
-    .replace(/[^0-9A-Za-z]/g, "")
-    .trim();
+  return parseParticipantLoginEmail(email);
 }
 
 function readSessionFromJson(value: unknown): StoredAuthSession | null {
@@ -105,6 +97,7 @@ function readSessionFromJson(value: unknown): StoredAuthSession | null {
   const user = isRecord(value.user) ? value.user : null;
   const userId = user && typeof user.id === "string" ? user.id : "";
   const userEmail = user && typeof user.email === "string" ? user.email : null;
+  const userLoginId = user && typeof user.loginId === "string" ? user.loginId : null;
   if (!accessToken || !refreshToken || !Number.isFinite(expiresAtMs) || !userId) {
     return null;
   }
@@ -114,7 +107,8 @@ function readSessionFromJson(value: unknown): StoredAuthSession | null {
     expiresAtMs,
     user: {
       id: userId,
-      email: userEmail
+      email: userEmail,
+      loginId: userLoginId
     }
   };
 }
@@ -133,6 +127,7 @@ function toSessionFromSupabasePayload(payload: unknown): StoredAuthSession | nul
   const user = isRecord(payload.user) ? payload.user : null;
   const userId = user && typeof user.id === "string" ? user.id : "";
   const userEmail = user && typeof user.email === "string" ? user.email : null;
+  const userLoginId = resolveLoginId(user, userEmail);
   if (
     !accessToken ||
     !refreshToken ||
@@ -148,7 +143,8 @@ function toSessionFromSupabasePayload(payload: unknown): StoredAuthSession | nul
     expiresAtMs: Math.max(0, expiresAtSecondsRaw * 1000),
     user: {
       id: userId,
-      email: userEmail
+      email: userEmail,
+      loginId: userLoginId || null
     }
   };
 }
@@ -232,74 +228,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  async function sendOtp(emailRaw: string) {
+  async function signInWithPassword(loginIdRaw: string, passwordRaw: string) {
     ensureSupabaseConfigured();
-    const email = emailRaw.trim().toLowerCase();
-    if (!email) {
-      throw new Error("Email is required.");
+    const loginId = normalizeProlificPid(loginIdRaw);
+    const password = passwordRaw.trim();
+    if (!loginId || !password) {
+      throw new Error("Prolific ID and password are required.");
     }
 
-    async function requestOtp(createUser: boolean) {
-      const response = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
+    const email = buildParticipantLoginEmail(loginId);
+    if (!email) {
+      throw new Error("Invalid Prolific ID.");
+    }
+
+    const response = await fetch(
+      `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
+      {
         method: "POST",
         headers: toHeaders(),
         body: JSON.stringify({
           email,
-          create_user: createUser
+          password
         })
-      });
-      const payload = await response.json().catch(() => ({}));
-      return { response, payload };
-    }
-
-    // First try sign-in flow for existing users.
-    const firstAttempt = await requestOtp(false);
-    if (firstAttempt.response.ok) {
-      return;
-    }
-
-    // If account doesn't exist yet, allow first-time signup.
-    if (shouldRetryOtpAsSignup(firstAttempt.payload)) {
-      const secondAttempt = await requestOtp(true);
-      if (secondAttempt.response.ok) {
-        return;
       }
-      throw new Error(
-        parseApiError(secondAttempt.payload, "Failed to send login code.")
-      );
-    }
-
-    throw new Error(
-      parseApiError(firstAttempt.payload, "Failed to send login code.")
     );
-  }
-
-  async function verifyOtp(emailRaw: string, tokenRaw: string) {
-    ensureSupabaseConfigured();
-    const email = emailRaw.trim().toLowerCase();
-    const token = normalizeOtpToken(tokenRaw);
-    if (!email || !token) {
-      throw new Error("Email and code are required.");
-    }
-
-    const response = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
-      method: "POST",
-      headers: toHeaders(),
-      body: JSON.stringify({
-        type: "email",
-        email,
-        token
-      })
-    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const reason = parseApiError(payload, "Invalid or expired login code.");
-      throw new Error(`OTP verify failed (${response.status}): ${reason}`);
+      const reason = parseApiError(payload, "Invalid Prolific ID or password.");
+      throw new Error(`Sign-in failed (${response.status}): ${reason}`);
     }
 
     const nextSession = toSessionFromSupabasePayload(payload);
     if (!nextSession) {
-      throw new Error("Verify response did not include a valid session.");
+      throw new Error("Sign-in response did not include a valid session.");
     }
 
     setSession(nextSession);
@@ -330,8 +291,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(session?.user?.id),
       user: session?.user ?? null,
       accessToken: session?.accessToken ?? null,
-      sendOtp,
-      verifyOtp,
+      signInWithPassword,
       signOut
     }),
     [isLoading, session]

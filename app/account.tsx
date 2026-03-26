@@ -28,8 +28,10 @@ export default function AccountRoute() {
         <Text style={styles.accountTitle}>My Account</Text>
 
         <View style={styles.accountField}>
-          <Text style={styles.accountFieldLabel}>Email</Text>
-          <Text style={styles.accountFieldValue}>{user?.email || "Unknown"}</Text>
+          <Text style={styles.accountFieldLabel}>Prolific ID</Text>
+          <Text style={styles.accountFieldValue}>
+            {user?.loginId || user?.email || "Unknown"}
+          </Text>
         </View>
 
         <View style={styles.accountField}>
