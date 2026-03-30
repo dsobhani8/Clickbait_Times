@@ -3510,6 +3510,9 @@ app.get("/feed", async (req, res) => {
     category === "All" &&
     Array.isArray(requestedTopicTargets) &&
     requestedTopicTargets.length > 1;
+  const balancedLimit = isTopicBalancedRequest
+    ? FEED_PER_TOPIC_TARGET * requestedTopicTargets.length
+    : FEED_PER_TOPIC_TARGET;
   const defaultLimit = resolveDefaultFeedLimit(category);
   const limitRaw = Number(hasExplicitLimit ? rawLimitParam : defaultLimit);
   const requestedLimit = Number.isFinite(limitRaw)
