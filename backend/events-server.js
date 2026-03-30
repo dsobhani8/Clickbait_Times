@@ -1043,6 +1043,17 @@ function resolveRequestedTopicTargets(category) {
   return [...FEED_TOPIC_TARGETS];
 }
 
+function resolveDefaultFeedLimit(category) {
+  const requestedTopicTargets = resolveRequestedTopicTargets(category);
+  const isTopicBalancedRequest =
+    category === "All" &&
+    Array.isArray(requestedTopicTargets) &&
+    requestedTopicTargets.length > 1;
+  return isTopicBalancedRequest
+    ? FEED_PER_TOPIC_TARGET * requestedTopicTargets.length
+    : FEED_PER_TOPIC_TARGET;
+}
+
 function buildCountsByTopic(articles, topicTargets) {
   const counts = {};
   if (Array.isArray(topicTargets)) {
@@ -3199,8 +3210,136 @@ app.get("/health", async (_req, res) => {
   });
 });
 
+app.get("/admin/ops/summary", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+
+  const category = normalizeRequestedCategory(req.query.category);
+  const defaultLimit = resolveDefaultFeedLimit(category);
+  const limitRaw = Number(req.query.limit ?? defaultLimit);
+  const limitCount = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(50, Math.round(limitRaw)))
+    : defaultLimit;
+  const provider = "newsapi_ai";
+  const today = utcDayStamp();
+  const nowIso = new Date().toISOString();
+  const publishedSnapshot = await getCurrentPublishedSnapshot({
+    category,
+    limitCount,
+    provider
+  });
+  const todaySnapshotRow = await findSnapshotRecordByDate({
+    snapshotDate: today,
+    category,
+    limitCount,
+    provider
+  });
+  const todaySnapshot =
+    Number.isFinite(Number(todaySnapshotRow?.snapshot_id)) &&
+    Number(todaySnapshotRow.snapshot_id) > 0
+      ? await getSnapshotById(Number(todaySnapshotRow.snapshot_id))
+      : null;
+  const rewriteJobsPending = await countRewriteJobsByStatus(
+    REWRITE_JOB_STATUS_PENDING
+  );
+  const rewriteJobsRunning = await countRewriteJobsByStatus(
+    REWRITE_JOB_STATUS_RUNNING
+  );
+  const rewriteJobsFailed = await countRewriteJobsByStatus(
+    REWRITE_JOB_STATUS_FAILED
+  );
+
+  return res.json({
+    ok: true,
+    serverTime: nowIso,
+    today,
+    category,
+    limit: limitCount,
+    provider,
+    publishedSnapshot: publishedSnapshot
+      ? {
+          snapshotId: publishedSnapshot.snapshotId,
+          snapshotDate: publishedSnapshot.snapshotDate,
+          status: publishedSnapshot.status,
+          count: publishedSnapshot.articles.length,
+          categories: publishedSnapshot.categories,
+          createdAt: publishedSnapshot.createdAt,
+          completedAt: publishedSnapshot.completedAt,
+          publishedAt: publishedSnapshot.publishedAt
+        }
+      : null,
+    todaySnapshot: todaySnapshot
+      ? {
+          snapshotId: todaySnapshot.snapshotId,
+          snapshotDate: todaySnapshot.snapshotDate,
+          status: todaySnapshot.status,
+          count: todaySnapshot.articles.length,
+          categories: todaySnapshot.categories,
+          createdAt: todaySnapshot.createdAt,
+          startedAt: todaySnapshot.startedAt,
+          completedAt: todaySnapshot.completedAt,
+          publishedAt: todaySnapshot.publishedAt,
+          errorMessage: todaySnapshot.errorMessage
+        }
+      : todaySnapshotRow
+        ? {
+            snapshotId: Number(todaySnapshotRow.snapshot_id),
+            snapshotDate: today,
+            status: todaySnapshotRow.status,
+            count: 0,
+            categories: [],
+            createdAt: todaySnapshotRow.created_at,
+            startedAt: todaySnapshotRow.started_at,
+            completedAt: todaySnapshotRow.completed_at,
+            publishedAt: todaySnapshotRow.published_at,
+            errorMessage: todaySnapshotRow.error_message
+          }
+        : null,
+    publishedMatchesToday:
+      Boolean(publishedSnapshot) && publishedSnapshot.snapshotDate === today,
+    refreshState: {
+      enabled: DAILY_REFRESH_ENABLED,
+      inFlight: dailyRefreshInFlight,
+      lastAttemptAt: dailyRefreshLastAttemptAt,
+      lastSuccessDate: dailyRefreshLastSuccessDate
+    },
+    rewriteJobs: {
+      global: {
+        pending: rewriteJobsPending,
+        running: rewriteJobsRunning,
+        failed: rewriteJobsFailed
+      },
+      todaySnapshot:
+        todaySnapshot && Number.isFinite(Number(todaySnapshot.snapshotId))
+          ? {
+              pending: await countRewriteJobsByStatus(
+                REWRITE_JOB_STATUS_PENDING,
+                Number(todaySnapshot.snapshotId)
+              ),
+              running: await countRewriteJobsByStatus(
+                REWRITE_JOB_STATUS_RUNNING,
+                Number(todaySnapshot.snapshotId)
+              ),
+              failed: await countRewriteJobsByStatus(
+                REWRITE_JOB_STATUS_FAILED,
+                Number(todaySnapshot.snapshotId)
+              )
+            }
+          : null
+    }
+  });
+});
+
 app.get("/dashboard/variants", (_req, res) => {
   return res.sendFile(path.join(__dirname, "public", "variants-dashboard.html"));
+});
+
+app.get("/dashboard/ops", (_req, res) => {
+  return res.sendFile(path.join(__dirname, "public", "ops-dashboard.html"));
 });
 
 app.get("/config", async (req, res) => {
@@ -3332,10 +3471,7 @@ app.get("/feed", async (req, res) => {
     category === "All" &&
     Array.isArray(requestedTopicTargets) &&
     requestedTopicTargets.length > 1;
-  const balancedLimit = isTopicBalancedRequest
-    ? FEED_PER_TOPIC_TARGET * requestedTopicTargets.length
-    : FEED_PER_TOPIC_TARGET;
-  const defaultLimit = balancedLimit;
+  const defaultLimit = resolveDefaultFeedLimit(category);
   const limitRaw = Number(hasExplicitLimit ? rawLimitParam : defaultLimit);
   const requestedLimit = Number.isFinite(limitRaw)
     ? Math.max(1, Math.min(50, Math.round(limitRaw)))
@@ -4242,10 +4378,10 @@ app.get("/articles/:id", async (req, res) => {
 
 app.get("/feed/snapshot/today", async (req, res) => {
   const category = normalizeRequestedCategory(req.query.category);
-  const limitRaw = Number(req.query.limit ?? 5);
+  const limitRaw = Number(req.query.limit ?? resolveDefaultFeedLimit(category));
   const limitCount = Number.isFinite(limitRaw)
     ? Math.max(1, Math.min(50, Math.round(limitRaw)))
-    : 5;
+    : resolveDefaultFeedLimit(category);
   const provider = "newsapi_ai";
   const snapshotDate = utcDayStamp();
   const snapshot = await getDailySnapshot({

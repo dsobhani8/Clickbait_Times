@@ -6,6 +6,5 @@ console.log(
   "[analytics-queue:clear] To clear queued client events, clear app storage in Expo Go (or reinstall Expo Go), then restart the app."
 );
 console.log(
-  "[analytics-queue:clear] To clear server-side stored events, run `npm run analytics:reset`."
+  "[analytics-queue:clear] Server-side analytics now live in Supabase Postgres. Clear them with SQL only if you intentionally want to wipe production/local data."
 );
-

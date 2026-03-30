@@ -3,7 +3,7 @@ const Database = require("better-sqlite3");
 
 const DB_PATH =
   process.env.ANALYTICS_DB_PATH ||
-  path.join(__dirname, "analytics-events.db");
+  path.join(__dirname, "..", "..", "backend", "analytics-events.db");
 
 function main() {
   const db = new Database(DB_PATH, { readonly: true });

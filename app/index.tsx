@@ -76,6 +76,7 @@ export default function FeedRoute() {
   const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const articlePositionById = useMemo(() => {
     const map = new Map<string, number>();
     articles.forEach((article, index) => {
@@ -199,6 +200,7 @@ export default function FeedRoute() {
     arm,
     experimentKey,
     experimentSource,
+    reloadNonce,
     selectedCategory,
     userId,
     assignmentLoading,
@@ -313,6 +315,17 @@ export default function FeedRoute() {
       {error ? (
         <View style={styles.loadingCard}>
           <Text style={styles.errorText}>{error}</Text>
+          <Pressable
+            onPress={() => {
+              setReloadNonce((value) => value + 1);
+            }}
+            style={({ pressed }) => [
+              styles.retryButton,
+              pressed && styles.retryButtonPressed
+            ]}
+          >
+            <Text style={styles.retryButtonLabel}>Retry Feed</Text>
+          </Pressable>
         </View>
       ) : null}
 

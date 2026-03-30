@@ -1,10 +1,10 @@
 const path = require("path");
 const Database = require("better-sqlite3");
-const { loadArticleIndex } = require("./lib/articles-index");
+const { loadArticleIndex } = require("./articles-index");
 
 const DB_PATH =
   process.env.ANALYTICS_DB_PATH ||
-  path.join(__dirname, "analytics-events.db");
+  path.join(__dirname, "..", "..", "backend", "analytics-events.db");
 
 function parseProperties(raw) {
   try {

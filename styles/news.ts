@@ -547,5 +547,21 @@ export const styles = StyleSheet.create({
     color: "#8a1f11",
     fontSize: 14,
     lineHeight: 20
+  },
+  retryButton: {
+    marginTop: 12,
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    backgroundColor: palette.ink,
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+  retryButtonPressed: {
+    opacity: 0.88
+  },
+  retryButtonLabel: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "800"
   }
 });

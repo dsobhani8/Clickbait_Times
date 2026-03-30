@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TailorMadeTimes Ops Dashboard</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f1e7;
+        --card: #fffdf8;
+        --ink: #171512;
+        --muted: #6e675e;
+        --accent: #0f766e;
+        --warn: #9a3412;
+        --danger: #991b1b;
+        --border: #e4d9c7;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        background: linear-gradient(180deg, #f8f4ec 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      main {
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 2rem;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .controls,
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: 0 10px 28px rgba(30, 24, 17, 0.06);
+      }
+
+      .controls {
+        margin-top: 18px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        margin-top: 16px;
+      }
+
+      label {
+        display: block;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      input {
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font: inherit;
+        background: #fff;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: progress;
+        opacity: 0.7;
+      }
+
+      .controls-row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 1.5fr 0.7fr 0.7fr auto;
+        align-items: end;
+      }
+
+      .status-ok {
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .status-warn {
+        color: var(--warn);
+        font-weight: 700;
+      }
+
+      .status-danger {
+        color: var(--danger);
+        font-weight: 700;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 8px 12px;
+        font-size: 0.95rem;
+      }
+
+      .kv strong {
+        color: var(--muted);
+      }
+
+      .banner {
+        margin-top: 16px;
+        border-radius: 14px;
+        padding: 14px 16px;
+        font-weight: 700;
+      }
+
+      .banner.ok {
+        background: #ddf3ef;
+        color: #115e59;
+      }
+
+      .banner.warn {
+        background: #fff1dc;
+        color: var(--warn);
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #f7f3eb;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 12px;
+        font-size: 0.85rem;
+      }
+
+      .small {
+        font-size: 0.85rem;
+      }
+
+      @media (max-width: 740px) {
+        .controls-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>TailorMadeTimes Ops Dashboard</h1>
+      <p>
+        Use this page to check whether today's edition exists, which snapshot is
+        published, and whether any rewrite jobs failed.
+      </p>
+
+      <section class="controls">
+        <div class="controls-row">
+          <div>
+            <label for="token">Admin Token</label>
+            <input id="token" type="password" placeholder="Required for ops summary" />
+          </div>
+          <div>
+            <label for="category">Category</label>
+            <input id="category" type="text" value="All" />
+          </div>
+          <div>
+            <label for="limit">Limit</label>
+            <input id="limit" type="number" min="1" max="50" placeholder="default" />
+          </div>
+          <button id="refresh-btn" type="button">Refresh Status</button>
+        </div>
+        <p class="small" style="margin-top: 10px">
+          Recommended morning checks: published snapshot date, today's snapshot
+          status, and rewrite job failures.
+        </p>
+      </section>
+
+      <div id="banner" class="banner warn" style="display: none"></div>
+
+      <section class="grid" style="margin-top: 16px">
+        <article class="card">
+          <h2>Published Snapshot</h2>
+          <div id="published" class="kv small"></div>
+        </article>
+        <article class="card">
+          <h2>Today's Snapshot</h2>
+          <div id="today" class="kv small"></div>
+        </article>
+        <article class="card">
+          <h2>Rewrite Jobs</h2>
+          <div id="jobs" class="kv small"></div>
+        </article>
+        <article class="card">
+          <h2>Scheduler State</h2>
+          <div id="scheduler" class="kv small"></div>
+        </article>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <h2>Raw Summary</h2>
+        <pre id="raw">Press "Refresh Status".</pre>
+      </section>
+    </main>
+
+    <script>
+      const tokenInput = document.getElementById("token");
+      const categoryInput = document.getElementById("category");
+      const limitInput = document.getElementById("limit");
+      const refreshButton = document.getElementById("refresh-btn");
+      const bannerEl = document.getElementById("banner");
+      const rawEl = document.getElementById("raw");
+
+      const publishedEl = document.getElementById("published");
+      const todayEl = document.getElementById("today");
+      const jobsEl = document.getElementById("jobs");
+      const schedulerEl = document.getElementById("scheduler");
+
+      function renderKeyValues(target, pairs) {
+        target.innerHTML = pairs
+          .map(
+            ([label, value]) =>
+              `<strong>${label}</strong><span>${value == null || value === "" ? "—" : value}</span>`
+          )
+          .join("");
+      }
+
+      function statusClass(ok, warning = false) {
+        if (ok) return "status-ok";
+        if (warning) return "status-warn";
+        return "status-danger";
+      }
+
+      function setBanner(message, kind) {
+        bannerEl.style.display = "block";
+        bannerEl.className = `banner ${kind}`;
+        bannerEl.textContent = message;
+      }
+
+      async function loadSummary() {
+        const token = tokenInput.value.trim();
+        if (!token) {
+          setBanner("Enter the admin token first.", "warn");
+          return;
+        }
+
+        refreshButton.disabled = true;
+        setBanner("Refreshing ops summary...", "warn");
+
+        try {
+          const params = new URLSearchParams();
+          const category = categoryInput.value.trim() || "All";
+          params.set("category", category);
+          const limit = limitInput.value.trim();
+          if (limit) params.set("limit", limit);
+
+          const response = await fetch(`/admin/ops/summary?${params.toString()}`, {
+            headers: {
+              "x-admin-token": token
+            }
+          });
+          const data = await response.json();
+
+          if (!response.ok || data?.ok !== true) {
+            throw new Error(data?.error || `Summary request failed with ${response.status}`);
+          }
+
+          const published = data.publishedSnapshot || null;
+          const today = data.todaySnapshot || null;
+          const todayJobs = data.rewriteJobs?.todaySnapshot || null;
+          const publishedMatchesToday = data.publishedMatchesToday === true;
+          const hasRewriteFailures =
+            Number(data.rewriteJobs?.global?.failed || 0) > 0 ||
+            Number(todayJobs?.failed || 0) > 0;
+
+          renderKeyValues(publishedEl, [
+            ["Snapshot ID", published?.snapshotId],
+            ["Date", published?.snapshotDate],
+            ["Status", published?.status],
+            ["Article Count", published?.count],
+            ["Published At", published?.publishedAt],
+            ["Matches Today?", `<span class="${statusClass(publishedMatchesToday, !published)}">${publishedMatchesToday ? "Yes" : "No"}</span>`]
+          ]);
+
+          renderKeyValues(todayEl, [
+            ["Snapshot ID", today?.snapshotId],
+            ["Date", today?.snapshotDate],
+            ["Status", today?.status ? `<span class="${statusClass(today.status === "ready", today.status === "building")}">${today.status}</span>` : "missing"],
+            ["Article Count", today?.count],
+            ["Completed At", today?.completedAt],
+            ["Error", today?.errorMessage]
+          ]);
+
+          renderKeyValues(jobsEl, [
+            ["Global Pending", data.rewriteJobs?.global?.pending],
+            ["Global Running", data.rewriteJobs?.global?.running],
+            ["Global Failed", `<span class="${statusClass(Number(data.rewriteJobs?.global?.failed || 0) === 0, Number(data.rewriteJobs?.global?.failed || 0) === 0)}">${data.rewriteJobs?.global?.failed ?? 0}</span>`],
+            ["Today Pending", todayJobs?.pending],
+            ["Today Running", todayJobs?.running],
+            ["Today Failed", `<span class="${statusClass(Number(todayJobs?.failed || 0) === 0, Number(todayJobs?.failed || 0) === 0)}">${todayJobs?.failed ?? 0}</span>`]
+          ]);
+
+          renderKeyValues(schedulerEl, [
+            ["Scheduler Enabled", data.refreshState?.enabled ? "Yes" : "No"],
+            ["In Flight", data.refreshState?.inFlight ? "Yes" : "No"],
+            ["Last Attempt", data.refreshState?.lastAttemptAt],
+            ["Last Success Date", data.refreshState?.lastSuccessDate],
+            ["Server Time", data.serverTime]
+          ]);
+
+          if (publishedMatchesToday && !hasRewriteFailures) {
+            setBanner("Published snapshot is current and no rewrite failures are reported.", "ok");
+          } else if (!publishedMatchesToday) {
+            setBanner("Published feed is stale. The app is still serving an older snapshot.", "warn");
+          } else {
+            setBanner("Today's feed is published, but rewrite failures were reported. Inspect the jobs section.", "warn");
+          }
+
+          rawEl.textContent = JSON.stringify(data, null, 2);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setBanner(`Failed to load ops summary: ${message}`, "warn");
+          rawEl.textContent = message;
+        } finally {
+          refreshButton.disabled = false;
+        }
+      }
+
+      refreshButton.addEventListener("click", loadSummary);
+    </script>
+  </body>
+</html>

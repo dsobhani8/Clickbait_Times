@@ -8,23 +8,11 @@ const REGULAR_TITLE_LEAD_PROMPT_FILE =
 
 const VARIANT_PROMPT_FILES = Object.freeze({
   facts_only: "modules/d_versions/facts_only/prompts/facts_only_body.py",
-  less_complex: "modules/d_versions/less_complex/prompts/less_complex_body.py",
-  more_positive: "modules/d_versions/more_positive/prompts/more_positive_body.py",
-  more_negative: "modules/d_versions/more_negative/prompts/more_negative_body.py",
-  conservative: "modules/d_versions/conservative/prompts/conservative_body.py",
-  liberal: "modules/d_versions/liberal/prompts/liberal_body.py",
-  entertaining: "modules/d_versions/entertaining/prompts/entertaining_body.py",
   clickbait: "modules/d_versions/clickbait/prompts/clickbait_body.py"
 });
 
 const TITLE_LEAD_PROMPT_FILES = Object.freeze({
   facts_only: "modules/d_versions/facts_only/prompts/facts_only_title_lead.py",
-  less_complex: "modules/d_versions/less_complex/prompts/less_complex_title_lead.py",
-  more_positive: "modules/d_versions/more_positive/prompts/more_positive_title_lead.py",
-  more_negative: "modules/d_versions/more_negative/prompts/more_negative_title_lead.py",
-  conservative: "modules/d_versions/conservative/prompts/conservative_title_lead.py",
-  liberal: "modules/d_versions/liberal/prompts/liberal_title_lead.py",
-  entertaining: "modules/d_versions/entertaining/prompts/entertaining_title_lead.py",
   clickbait: "modules/d_versions/clickbait/prompts/clickbait_title_lead.py"
 });
 
