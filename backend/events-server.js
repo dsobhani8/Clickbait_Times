@@ -87,6 +87,16 @@ const FEED_MAX_WORDS_RAW = Number(process.env.FEED_MAX_WORDS || 1500);
 const FEED_MAX_WORDS = Number.isFinite(FEED_MAX_WORDS_RAW)
   ? Math.max(FEED_MIN_WORDS, Math.min(20000, Math.round(FEED_MAX_WORDS_RAW)))
   : Math.max(FEED_MIN_WORDS, 1500);
+const FEED_FRESH_ARTICLE_MAX_AGE_HOURS_RAW = Number(
+  process.env.FEED_FRESH_ARTICLE_MAX_AGE_HOURS || 48
+);
+const FEED_FRESH_ARTICLE_MAX_AGE_HOURS = Number.isFinite(
+  FEED_FRESH_ARTICLE_MAX_AGE_HOURS_RAW
+)
+  ? Math.max(1, Math.min(24 * 30, Math.round(FEED_FRESH_ARTICLE_MAX_AGE_HOURS_RAW)))
+  : 48;
+const FEED_FRESH_ARTICLE_MAX_AGE_MS =
+  FEED_FRESH_ARTICLE_MAX_AGE_HOURS * 60 * 60 * 1000;
 const FEED_WAIT_FOR_REWRITE =
   String(process.env.FEED_WAIT_FOR_REWRITE || "1").trim() !== "0";
 const DAILY_REFRESH_ENABLED =
@@ -1130,6 +1140,34 @@ function countArticleWords(article) {
 function isWithinArticleWordBounds(article) {
   const count = countArticleWords(article);
   return count >= FEED_MIN_WORDS && count <= FEED_MAX_WORDS;
+}
+
+function getArticlePublishedMs(article) {
+  const publishedAt =
+    typeof article?.publishedAt === "string" && article.publishedAt.length > 0
+      ? article.publishedAt
+      : null;
+  const publishedMs = publishedAt ? Date.parse(publishedAt) : NaN;
+  if (Number.isFinite(publishedMs) && publishedMs > 0) {
+    return publishedMs;
+  }
+
+  const minutesAgo = Number(article?.publishedMinutesAgo);
+  if (Number.isFinite(minutesAgo) && minutesAgo >= 0) {
+    return Date.now() - minutesAgo * 60 * 1000;
+  }
+
+  return NaN;
+}
+
+function isFreshEnoughArticle(article, nowMs = Date.now()) {
+  const publishedMs = getArticlePublishedMs(article);
+  if (!Number.isFinite(publishedMs) || publishedMs <= 0) {
+    return false;
+  }
+
+  const ageMs = Math.max(0, nowMs - publishedMs);
+  return ageMs <= FEED_FRESH_ARTICLE_MAX_AGE_MS;
 }
 
 function rowToArticle(row) {
@@ -3193,6 +3231,7 @@ app.get("/health", async (_req, res) => {
     feedCacheTtlMs: FEED_CACHE_TTL_MS,
     feedMinWords: FEED_MIN_WORDS,
     feedMaxWords: FEED_MAX_WORDS,
+    feedFreshArticleMaxAgeHours: FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
     feedWaitForRewrite: FEED_WAIT_FOR_REWRITE,
     dailyRefreshEnabled: DAILY_REFRESH_ENABLED,
     dailyRefreshCategory: DAILY_REFRESH_CATEGORY,
@@ -3715,12 +3754,16 @@ app.get("/feed", async (req, res) => {
     let skippedLength = 0;
     let skippedNone = 0;
     let skippedOutOfTarget = 0;
+    let freshSelectedCount = 0;
+    let staleFallbackSelectedCount = 0;
     const selectedArticles = [];
     const seenArticleKeys = new Set();
     const topicBuckets = new Map();
+    const staleFallbackBuckets = new Map();
     if (isBalancedAllRequest) {
       for (const topic of requestedTopicTargets) {
         topicBuckets.set(topic, []);
+        staleFallbackBuckets.set(topic, []);
       }
     }
 
@@ -3817,8 +3860,14 @@ app.get("/feed", async (req, res) => {
             };
 
             const bucket = topicBuckets.get(topic);
+            const staleBucket = staleFallbackBuckets.get(topic);
             if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
-              bucket.push(mappedArticle);
+              if (isFreshEnoughArticle(mappedArticle, now)) {
+                bucket.push(mappedArticle);
+                freshSelectedCount += 1;
+              } else if (Array.isArray(staleBucket)) {
+                staleBucket.push(mappedArticle);
+              }
             }
 
             if (hasReachedTarget()) {
@@ -3838,11 +3887,32 @@ app.get("/feed", async (req, res) => {
           }
         }
 
+        const targetBucket = topicBuckets.get(targetTopic);
+        const targetFallbackBucket = staleFallbackBuckets.get(targetTopic);
+        if (
+          Array.isArray(targetBucket) &&
+          Array.isArray(targetFallbackBucket) &&
+          targetBucket.length < FEED_PER_TOPIC_TARGET
+        ) {
+          while (
+            targetBucket.length < FEED_PER_TOPIC_TARGET &&
+            targetFallbackBucket.length > 0
+          ) {
+            const nextFallback = targetFallbackBucket.shift();
+            if (!nextFallback) {
+              break;
+            }
+            targetBucket.push(nextFallback);
+            staleFallbackSelectedCount += 1;
+          }
+        }
+
         if (hasReachedTarget()) {
           break;
         }
       }
     } else {
+      const staleFallbackArticles = [];
       for (let page = 1; page <= maxPages; page += 1) {
         const result = await fetchNewsApiArticles({
           apiKey: NEWSAPI_AI_KEY,
@@ -3902,15 +3972,29 @@ app.get("/feed", async (req, res) => {
             topicLabel: topic,
             topicTag: classification.tag ?? null
           };
-          selectedArticles.push(mappedArticle);
-          if (hasReachedTarget()) {
-            break;
+          if (isFreshEnoughArticle(mappedArticle, now)) {
+            selectedArticles.push(mappedArticle);
+            freshSelectedCount += 1;
+            if (hasReachedTarget()) {
+              break;
+            }
+          } else {
+            staleFallbackArticles.push(mappedArticle);
           }
         }
 
         if (hasReachedTarget()) {
           break;
         }
+      }
+
+      while (selectedArticles.length < limit && staleFallbackArticles.length > 0) {
+        const nextFallback = staleFallbackArticles.shift();
+        if (!nextFallback) {
+          break;
+        }
+        selectedArticles.push(nextFallback);
+        staleFallbackSelectedCount += 1;
       }
     }
 
@@ -4062,6 +4146,10 @@ app.get("/feed", async (req, res) => {
         rewriteJobStats: rewriteStats,
         refreshRequested,
         rebuildRequested,
+        freshnessPolicy: "fresh_first_with_stale_fallback",
+        freshArticleMaxAgeHours: FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+        freshSelectedCount,
+        staleFallbackCount: staleFallbackSelectedCount,
         topicTargets: requestedTopicTargets,
         perTopicTarget,
         countsByTopic: responseCountsByTopic,
@@ -4074,7 +4162,9 @@ app.get("/feed", async (req, res) => {
               classifiedAccepted,
               skippedLength,
               skippedNone,
-              skippedOutOfTarget
+              skippedOutOfTarget,
+              freshSelectedCount,
+              staleFallbackCount: staleFallbackSelectedCount
             }
           : undefined,
         sourceUri: sourceUriUsed || null,
