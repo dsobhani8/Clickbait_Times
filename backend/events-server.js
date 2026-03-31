@@ -2588,6 +2588,9 @@ const saveDailySnapshotSqlite = db.transaction(
     deleteSnapshotItemsStmt.run({ snapshotId });
     deleteSnapshotArticlesStmt.run({ snapshotId });
     deleteSnapshotVariantsStmt.run({ snapshotId });
+    db.prepare("DELETE FROM rewrite_jobs WHERE snapshot_id = @snapshotId").run({
+      snapshotId
+    });
 
     articles.forEach((article, index) => {
       const rank = index + 1;
@@ -2783,6 +2786,7 @@ async function saveDailySnapshot({
       "DELETE FROM snapshot_article_variants WHERE snapshot_id = $1",
       [snapshotId]
     );
+    await client.query("DELETE FROM rewrite_jobs WHERE snapshot_id = $1", [snapshotId]);
 
     for (let index = 0; index < articles.length; index += 1) {
       const article = articles[index];
