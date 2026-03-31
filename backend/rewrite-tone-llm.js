@@ -4,8 +4,6 @@ const {
   buildDefaultVariantMethodMap
 } = require("./rewrite-specs");
 const {
-  buildRegularBodyPrompt,
-  buildVariantBodyPrompt,
   buildTitleLeadPrompt,
   formatArticle
 } = require("./rewrite-prompts");
@@ -27,22 +25,9 @@ const REWRITE_MAX_ATTEMPTS = Number.isFinite(REWRITE_MAX_ATTEMPTS_RAW)
   ? Math.max(1, Math.min(5, Math.round(REWRITE_MAX_ATTEMPTS_RAW)))
   : 2;
 const REWRITE_PIPELINE = process.env.REWRITE_PIPELINE || "paper_v1";
-const TONE_LLM_METHOD = "tone_llm_simple_v1";
+const TONE_LLM_METHOD = "tone_llm_title_lead_v1";
 const TONE_LLM_REGULAR_METHOD = "tone_llm_regular_v1";
 const TONE_LLM_PENDING_METHOD = "tone_llm_pending_v1";
-
-const SYSTEM_PROMPT_REGULAR_BODY = [
-  "Follow the user instructions exactly.",
-  "Return only valid JSON with key: summary.",
-  "summary must be a single string containing the full rewritten article body."
-].join(" ");
-
-const SYSTEM_PROMPT_VARIANT_BODY = [
-  "Follow the user instructions exactly.",
-  "Return only valid JSON with keys: sentences, rewritten_article.",
-  "rewritten_article must be a single string containing the full rewritten article body.",
-  "sentences can be a string or array of strings."
-].join(" ");
 
 const SYSTEM_PROMPT_TITLE_LEAD = [
   "Follow the user instructions exactly.",
@@ -131,6 +116,10 @@ function toArticleInput(article) {
     lead: typeof article?.lead === "string" ? article.lead : "",
     body: normalizeBody(article?.body)
   };
+}
+
+function toArticleText(article) {
+  return formatArticle(toArticleInput(article));
 }
 
 function validateVariantOutput(output, fallbackVariant) {
@@ -244,77 +233,16 @@ function normalizeNonEmptyString(value) {
   return value.trim();
 }
 
-function normalizeBodyString(value) {
-  const normalized = normalizeNonEmptyString(value);
-  if (!normalized) {
-    return "";
-  }
-  return normalized;
-}
-
-function toBodyString(bodyValue) {
-  return normalizeBody(bodyValue).join("\n\n");
-}
-
-function buildArticleInputFromBody(article, bodyText) {
-  return {
-    ...toArticleInput(article),
-    body: normalizeBody(bodyText)
-  };
-}
-
-async function rewriteRegularBody({ articleInput }) {
-  const basePrompt = buildRegularBodyPrompt({ articleInput });
-  const parsed = await callOpenAiJson({
-    systemPrompt: SYSTEM_PROMPT_REGULAR_BODY,
-    userPrompt: basePrompt,
-    temperature: OPENAI_TEMPERATURE
-  });
-
-  let summary =
-    normalizeBodyString(parsed?.summary) ||
-    normalizeBodyString(parsed?.rewritten_article) ||
-    normalizeBodyString(parsed?.article) ||
-    normalizeBodyString(parsed?.body);
-  if (!summary) {
-    throw new Error("Regular rewrite returned empty summary.");
-  }
-  return summary;
-}
-
-async function rewriteVariantBody({ variantKey, articleInput }) {
-  const parsed = await callOpenAiJson({
-    systemPrompt: SYSTEM_PROMPT_VARIANT_BODY,
-    userPrompt: buildVariantBodyPrompt({ variantKey, articleInput }),
-    temperature: OPENAI_TEMPERATURE
-  });
-
-  const rewrittenArticle =
-    normalizeBodyString(parsed?.rewritten_article) ||
-    normalizeBodyString(parsed?.summary) ||
-    normalizeBodyString(parsed?.body);
-  if (!rewrittenArticle) {
-    throw new Error(
-      `Variant rewrite returned empty article text for variant "${variantKey}".`
-    );
-  }
-
-  return {
-    rewrittenArticle,
-    sentences: parsed?.sentences ?? ""
-  };
-}
-
 async function rewriteVariantTitleLead({
   variantKey,
-  rewrittenArticleText,
+  articleText,
   fallbackVariant
 }) {
   const parsed = await callOpenAiJson({
     systemPrompt: SYSTEM_PROMPT_TITLE_LEAD,
     userPrompt: buildTitleLeadPrompt({
       variantKey,
-      articleText: rewrittenArticleText
+      articleText
     }),
     temperature: OPENAI_TEMPERATURE
   });
@@ -328,16 +256,7 @@ async function rewriteVariantTitleLead({
 }
 
 async function rewriteRegularArticleForBase(article) {
-  const articleInput = toArticleInput(article);
-  try {
-    return await rewriteRegularBody({ articleInput });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[rewrite-tone-llm] regular fallback article=${article?.id ?? "unknown"}: ${message}`
-    );
-    return formatArticle(articleInput);
-  }
+  return toArticleText(article);
 }
 
 async function rewriteRegularVariantForArticle(article, fallbackVariant = null) {
@@ -349,48 +268,11 @@ async function rewriteRegularVariantForArticle(article, fallbackVariant = null) 
       body: normalizeBody(article?.body)
     };
 
-  if (!isToneLlmEnabled()) {
-    return {
-      variant: fallback,
-      rewrittenBodyText: toBodyString(fallback.body),
-      rewriteMethod: RULE_REWRITE_METHOD
-    };
-  }
-
-  try {
-    const articleInput = toArticleInput(article);
-    const rewrittenBodyText = await rewriteRegularBody({ articleInput });
-    const { title, lead } = await rewriteVariantTitleLead({
-      variantKey: "regular",
-      rewrittenArticleText: rewrittenBodyText,
-      fallbackVariant: fallback
-    });
-
-    const variant = validateVariantOutput(
-      {
-        title,
-        lead,
-        body: normalizeBody(rewrittenBodyText)
-      },
-      fallback
-    );
-
-    return {
-      variant,
-      rewrittenBodyText,
-      rewriteMethod: TONE_LLM_REGULAR_METHOD
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[rewrite-tone-llm] regular fallback article=${article?.id ?? "unknown"}: ${message}`
-    );
-    return {
-      variant: fallback,
-      rewrittenBodyText: toBodyString(fallback.body),
-      rewriteMethod: RULE_REWRITE_METHOD
-    };
-  }
+  return {
+    variant: fallback,
+    rewrittenBodyText: toArticleText(article),
+    rewriteMethod: RULE_REWRITE_METHOD
+  };
 }
 
 async function buildVariantsForArticle(article) {
@@ -446,18 +328,11 @@ async function rewriteVariantForArticle({
   }
 
   try {
-    const baseText =
-      normalizeBodyString(regularArticleText) ||
-      (await rewriteRegularArticleForBase(article)) ||
-      toBodyString(article?.body);
-    const baseInput = buildArticleInputFromBody(article, baseText);
-    const { rewrittenArticle } = await rewriteVariantBody({
-      variantKey,
-      articleInput: baseInput
-    });
+    const articleText =
+      normalizeNonEmptyString(regularArticleText) || rewriteRegularArticleForBase(article);
     const { title, lead } = await rewriteVariantTitleLead({
       variantKey,
-      rewrittenArticleText: rewrittenArticle,
+      articleText: await articleText,
       fallbackVariant: fallback
     });
 
@@ -466,7 +341,7 @@ async function rewriteVariantForArticle({
         {
           title,
           lead,
-          body: normalizeBody(rewrittenArticle)
+          body: fallback.body
         },
         fallback
       ),

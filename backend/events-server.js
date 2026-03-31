@@ -20,8 +20,6 @@ const {
   REWRITE_TIMEOUT_MS,
   REWRITE_MODE,
   TONE_LLM_PENDING_METHOD,
-  TONE_LLM_REGULAR_METHOD,
-  rewriteRegularVariantForArticle,
   rewriteVariantForArticle,
   RULE_REWRITE_METHOD,
   TONE_LLM_METHOD
@@ -1916,7 +1914,10 @@ async function ensureRewriteJobsForSnapshot({
     return;
   }
   const nowIso = new Date().toISOString();
-  const targetVariantKeys = Array.from(new Set(["regular", ...LLM_VARIANT_KEYS]));
+  const targetVariantKeys = Array.from(new Set(LLM_VARIANT_KEYS));
+  if (targetVariantKeys.length === 0) {
+    return;
+  }
   if (!POSTGRES_ENABLED) {
     const stmt = db.prepare(
       `
@@ -2355,104 +2356,6 @@ async function rewriteSnapshotToneVariants({
   for (const row of rows) {
     const article = rowToArticle(row);
     const fallbackVariants = buildVariants(article);
-    const fallbackRegularVariant = fallbackVariants.regular;
-    let regularArticleText = Array.isArray(fallbackRegularVariant?.body)
-      ? fallbackRegularVariant.body.join("\n\n")
-      : Array.isArray(article.body)
-        ? article.body.join("\n\n")
-        : "";
-
-    const regularJobAttempt = await beginRewriteJob({
-      snapshotId,
-      articleId: article.id,
-      variantKey: "regular"
-    });
-
-    if (regularJobAttempt) {
-      try {
-        const {
-          variant: regularVariant,
-          rewrittenBodyText,
-          rewriteMethod: regularRewriteMethod
-        } = await rewriteRegularVariantForArticle(article, fallbackRegularVariant);
-        const finalizedRegular = regularVariant || fallbackRegularVariant;
-        const regularWriteAt = new Date().toISOString();
-        regularArticleText =
-          typeof rewrittenBodyText === "string" && rewrittenBodyText.trim().length > 0
-            ? rewrittenBodyText
-            : Array.isArray(finalizedRegular.body)
-              ? finalizedRegular.body.join("\n\n")
-              : regularArticleText;
-
-        await upsertSnapshotVariant({
-          snapshotId,
-          snapshotDate,
-          articleId: article.id,
-          variantKey: "regular",
-          title: finalizedRegular.title ?? article.title,
-          lead: finalizedRegular.lead ?? article.lead ?? null,
-          bodyJson: JSON.stringify(
-            Array.isArray(finalizedRegular.body)
-              ? finalizedRegular.body
-              : article.body ?? []
-          ),
-          rewriteMethod: regularRewriteMethod,
-          createdAt: regularWriteAt
-        });
-
-        await completeRewriteJob({
-          snapshotId,
-          articleId: article.id,
-          variantKey: "regular"
-        });
-
-        updated += 1;
-        if (regularRewriteMethod === TONE_LLM_REGULAR_METHOD) {
-          llm += 1;
-        } else {
-          fallback += 1;
-        }
-
-        const cachedRegular = articleCache.get(article.id);
-        if (cachedRegular) {
-          const cachedVariants =
-            cachedRegular.variants || buildVariants(cachedRegular);
-          const cachedVariantMethods =
-            cachedRegular.variantMethods || buildRuleVariantMethods();
-          articleCache.set(article.id, {
-            ...cachedRegular,
-            variants: {
-              ...cachedVariants,
-              regular: finalizedRegular
-            },
-            variantMethods: {
-              ...cachedVariantMethods,
-              regular: regularRewriteMethod
-            }
-          });
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await failRewriteJob({
-          snapshotId,
-          articleId: article.id,
-          variantKey: "regular",
-          attempts: regularJobAttempt.attempts,
-          maxAttempts: regularJobAttempt.maxAttempts,
-          errorMessage: message
-        });
-      }
-    } else {
-      const existingVariants = await getVariantsForSnapshotArticle(
-        snapshotId,
-        article.id
-      );
-      const storedRegular = existingVariants?.regular;
-      if (storedRegular && Array.isArray(storedRegular.body)) {
-        regularArticleText = storedRegular.body.join("\n\n");
-      }
-    }
-
     for (const variantKey of LLM_VARIANT_KEYS) {
       const fallbackVariant = fallbackVariants[variantKey];
       if (!fallbackVariant) continue;
@@ -2470,8 +2373,7 @@ async function rewriteSnapshotToneVariants({
         const { variant, rewriteMethod } = await rewriteVariantForArticle({
           article,
           variantKey,
-          fallbackVariant,
-          regularArticleText
+          fallbackVariant
         });
         const finalizedVariant = variant || fallbackVariant;
         const writeAt = new Date().toISOString();
