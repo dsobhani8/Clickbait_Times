@@ -3694,108 +3694,101 @@ app.get("/feed", async (req, res) => {
       return selectedArticles.length >= limit;
     };
 
-    if (isBalancedAllRequest) {
-      for (const targetTopic of requestedTopicTargets) {
-        const existingBucket = topicBuckets.get(targetTopic);
+    const staleFallbackArticles = [];
+    const shouldUseTopicPagedFetch =
+      Array.isArray(requestedTopicTargets) && requestedTopicTargets.length > 0;
+    const retrievalMaxPages = shouldUseTopicPagedFetch ? FEED_FETCH_MAX_PAGES : maxPages;
+
+    for (let page = 1; page <= retrievalMaxPages; page += 1) {
+      const result = await fetchNewsApiArticles({
+        apiKey: NEWSAPI_AI_KEY,
+        category: "All",
+        limit: fetchCount,
+        page,
+        sourceUri: NEWSAPI_AI_SOURCE_URI,
+        sourceKeyword: NEWSAPI_AI_SOURCE_URI ? "" : NEWSAPI_AI_SOURCE_KEYWORD
+      });
+      if (!sourceUriUsed && result?.sourceUri) {
+        sourceUriUsed = result.sourceUri;
+      }
+      const pageArticlesRaw = Array.isArray(result?.articles) ? result.articles : [];
+      pagesFetched += 1;
+      if (pageArticlesRaw.length === 0) {
+        break;
+      }
+
+      const pageArticles = [];
+      for (const candidate of pageArticlesRaw) {
+        const dedupeKey =
+          typeof candidate?.id === "string" && candidate.id.length > 0
+            ? candidate.id
+            : `${candidate?.title || ""}::${candidate?.publishedAt || ""}`;
+        if (seenArticleKeys.has(dedupeKey)) {
+          continue;
+        }
+        seenArticleKeys.add(dedupeKey);
+        pageArticles.push(candidate);
+      }
+      fetchedCount += pageArticles.length;
+
+      for (const candidate of pageArticles) {
+        if (!isWithinArticleWordBounds(candidate)) {
+          skippedLength += 1;
+          continue;
+        }
+        const classification = await classifyArticleMetadata(candidate);
+        const topic = classification.topic;
+        if (topic === TOPIC_NONE) {
+          skippedNone += 1;
+          continue;
+        }
         if (
-          Array.isArray(existingBucket) &&
-          existingBucket.length >= FEED_PER_TOPIC_TARGET
+          Array.isArray(requestedTopicTargets) &&
+          requestedTopicTargets.length > 0 &&
+          !requestedTopicTargets.includes(topic)
         ) {
+          skippedOutOfTarget += 1;
           continue;
         }
 
-        for (let page = 1; page <= maxPages; page += 1) {
-          const result = await fetchNewsApiArticles({
-            apiKey: NEWSAPI_AI_KEY,
-            category: targetTopic,
-            limit: fetchCount,
-            page,
-            sourceUri: NEWSAPI_AI_SOURCE_URI,
-            sourceKeyword: NEWSAPI_AI_SOURCE_URI ? "" : NEWSAPI_AI_SOURCE_KEYWORD
-          });
-          if (!sourceUriUsed && result?.sourceUri) {
-            sourceUriUsed = result.sourceUri;
-          }
-          const pageArticlesRaw = Array.isArray(result?.articles) ? result.articles : [];
-          pagesFetched += 1;
-          if (pageArticlesRaw.length === 0) {
-            break;
-          }
+        classifiedAccepted += 1;
+        const mappedArticle = {
+          ...candidate,
+          category: topic,
+          topicLabel: topic,
+          topicTag: classification.tag ?? null
+        };
 
-          const pageArticles = [];
-          for (const candidate of pageArticlesRaw) {
-            const dedupeKey =
-              typeof candidate?.id === "string" && candidate.id.length > 0
-                ? candidate.id
-                : `${candidate?.title || ""}::${candidate?.publishedAt || ""}`;
-            if (seenArticleKeys.has(dedupeKey)) {
-              continue;
-            }
-            seenArticleKeys.add(dedupeKey);
-            pageArticles.push(candidate);
-          }
-          fetchedCount += pageArticles.length;
-
-          for (const candidate of pageArticles) {
-            if (!isWithinArticleWordBounds(candidate)) {
-              skippedLength += 1;
-              continue;
-            }
-            const classification = await classifyArticleMetadata(candidate);
-            const topic = classification.topic;
-            if (topic === TOPIC_NONE) {
-              skippedNone += 1;
-              continue;
-            }
-            if (
-              Array.isArray(requestedTopicTargets) &&
-              requestedTopicTargets.length > 0 &&
-              !requestedTopicTargets.includes(topic)
-            ) {
-              skippedOutOfTarget += 1;
-              continue;
-            }
-            if (topic !== targetTopic) {
-              skippedOutOfTarget += 1;
-              continue;
-            }
-
-            classifiedAccepted += 1;
-            const mappedArticle = {
-              ...candidate,
-              category: topic,
-              topicLabel: topic,
-              topicTag: classification.tag ?? null
-            };
-
-            const bucket = topicBuckets.get(topic);
-            const staleBucket = staleFallbackBuckets.get(topic);
-            if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
-              if (isFreshEnoughArticle(mappedArticle, now)) {
-                bucket.push(mappedArticle);
-                freshSelectedCount += 1;
-              } else if (Array.isArray(staleBucket)) {
-                staleBucket.push(mappedArticle);
-              }
-            }
-
-            if (hasReachedTarget()) {
-              break;
+        if (isBalancedAllRequest) {
+          const bucket = topicBuckets.get(topic);
+          const staleBucket = staleFallbackBuckets.get(topic);
+          if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
+            if (isFreshEnoughArticle(mappedArticle, now)) {
+              bucket.push(mappedArticle);
+              freshSelectedCount += 1;
+            } else if (Array.isArray(staleBucket)) {
+              staleBucket.push(mappedArticle);
             }
           }
-
-          const targetBucket = topicBuckets.get(targetTopic);
-          if (
-            Array.isArray(targetBucket) &&
-            targetBucket.length >= FEED_PER_TOPIC_TARGET
-          ) {
-            break;
-          }
-          if (hasReachedTarget()) {
-            break;
-          }
+        } else if (isFreshEnoughArticle(mappedArticle, now)) {
+          selectedArticles.push(mappedArticle);
+          freshSelectedCount += 1;
+        } else {
+          staleFallbackArticles.push(mappedArticle);
         }
 
+        if (hasReachedTarget()) {
+          break;
+        }
+      }
+
+      if (hasReachedTarget()) {
+        break;
+      }
+    }
+
+    if (isBalancedAllRequest) {
+      for (const targetTopic of requestedTopicTargets) {
         const targetBucket = topicBuckets.get(targetTopic);
         const targetFallbackBucket = staleFallbackBuckets.get(targetTopic);
         if (
@@ -3815,88 +3808,8 @@ app.get("/feed", async (req, res) => {
             staleFallbackSelectedCount += 1;
           }
         }
-
-        if (hasReachedTarget()) {
-          break;
-        }
       }
     } else {
-      const staleFallbackArticles = [];
-      for (let page = 1; page <= maxPages; page += 1) {
-        const result = await fetchNewsApiArticles({
-          apiKey: NEWSAPI_AI_KEY,
-          category,
-          limit: fetchCount,
-          page,
-          sourceUri: NEWSAPI_AI_SOURCE_URI,
-          sourceKeyword: NEWSAPI_AI_SOURCE_URI ? "" : NEWSAPI_AI_SOURCE_KEYWORD
-        });
-        if (!sourceUriUsed && result?.sourceUri) {
-          sourceUriUsed = result.sourceUri;
-        }
-        const pageArticlesRaw = Array.isArray(result?.articles) ? result.articles : [];
-        pagesFetched += 1;
-        if (pageArticlesRaw.length === 0) {
-          break;
-        }
-
-        const pageArticles = [];
-        for (const candidate of pageArticlesRaw) {
-          const dedupeKey =
-            typeof candidate?.id === "string" && candidate.id.length > 0
-              ? candidate.id
-              : `${candidate?.title || ""}::${candidate?.publishedAt || ""}`;
-          if (seenArticleKeys.has(dedupeKey)) {
-            continue;
-          }
-          seenArticleKeys.add(dedupeKey);
-          pageArticles.push(candidate);
-        }
-        fetchedCount += pageArticles.length;
-
-        for (const candidate of pageArticles) {
-          if (!isWithinArticleWordBounds(candidate)) {
-            skippedLength += 1;
-            continue;
-          }
-          const classification = await classifyArticleMetadata(candidate);
-          const topic = classification.topic;
-          if (topic === TOPIC_NONE) {
-            skippedNone += 1;
-            continue;
-          }
-          if (
-            Array.isArray(requestedTopicTargets) &&
-            requestedTopicTargets.length > 0 &&
-            !requestedTopicTargets.includes(topic)
-          ) {
-            skippedOutOfTarget += 1;
-            continue;
-          }
-
-          classifiedAccepted += 1;
-          const mappedArticle = {
-            ...candidate,
-            category: topic,
-            topicLabel: topic,
-            topicTag: classification.tag ?? null
-          };
-          if (isFreshEnoughArticle(mappedArticle, now)) {
-            selectedArticles.push(mappedArticle);
-            freshSelectedCount += 1;
-            if (hasReachedTarget()) {
-              break;
-            }
-          } else {
-            staleFallbackArticles.push(mappedArticle);
-          }
-        }
-
-        if (hasReachedTarget()) {
-          break;
-        }
-      }
-
       while (selectedArticles.length < limit && staleFallbackArticles.length > 0) {
         const nextFallback = staleFallbackArticles.shift();
         if (!nextFallback) {

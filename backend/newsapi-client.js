@@ -5,11 +5,6 @@ const NEWSAPI_AI_SUGGEST_SOURCES_ENDPOINT =
   process.env.NEWSAPI_AI_SUGGEST_SOURCES_ENDPOINT ||
   "https://newsapi.ai/api/v1/suggestSources";
 
-function mapCategoryToKeyword(category) {
-  if (!category || category === "All" || category === "General") return null;
-  return category;
-}
-
 function extractBody(article) {
   if (typeof article.body === "string" && article.body.trim().length > 0) {
     return article.body;
@@ -168,10 +163,6 @@ function toInternalArticle(article, index) {
 
 function buildArticleQuery({ category, sourceUri }) {
   const queryParts = [{ lang: "eng" }];
-  const keyword = mapCategoryToKeyword(category);
-  if (keyword) {
-    queryParts.push({ keyword });
-  }
   if (sourceUri) {
     queryParts.push({ sourceUri });
   }
