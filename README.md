@@ -50,6 +50,7 @@ Operational docs and dashboards:
 - `docs/ops-runbook.md`
 - `backend/public/variants-dashboard.html`
 - `backend/public/ops-dashboard.html`
+- `prompts/runtime/`
 
 Reference material intentionally kept in the repo:
 - `modules/`
@@ -64,6 +65,8 @@ Local-only reference/data paths intentionally not tracked in Git:
 - `modules.zip`
 - `ingar_shared/`
 - `sensationalized_classifier/`
+- `modules/b_summary_metadata/regular_summary/prompts/*.py`
+- `modules/d_versions/*/prompts/*.py`
 
 ## Core Runtime Behavior
 
@@ -81,8 +84,13 @@ Local-only reference/data paths intentionally not tracked in Git:
 - Rewrites are generated server-side and stored in Postgres.
 - `REWRITE_MODE=tone_llm` enables LLM rewrites.
 - `regular` is the baseline/original article.
-- `facts_only` and `clickbait` are title/lead-only rewrites; the body stays the original body.
-- If a rewrite fails, the backend falls back to baseline copy for that variant.
+- `facts_only` is now a staged neutral rewrite:
+  - facts-only body rewrite
+  - then facts-only title + lead rewrite
+- `clickbait` is derived from the neutral rewrite:
+  - clickbait title + lead rewrite
+  - then clickbait body rewrite
+- If a rewrite stage fails, the backend falls back to the safest earlier stage available for that variant.
 
 ### Auth and experiment assignment
 - Participants log in with `Prolific ID + password`.
@@ -152,15 +160,21 @@ Local-only reference/data paths intentionally not tracked in Git:
 - Prompt loading lives in:
   - `backend/rewrite-prompts.js`
 - Active prompt files are:
-  - `modules/d_versions/facts_only/prompts/facts_only_title_lead.py`
-  - `modules/d_versions/clickbait/prompts/clickbait_title_lead.py`
+  - `prompts/runtime/regular_body_rewrite.py`
+  - `prompts/runtime/regular_title_lead_rewrite.py`
+  - `prompts/runtime/clickbait_title_lead_rewrite.py`
+  - `prompts/runtime/clickbait_body_rewrite.py`
 - The active runtime behavior is:
   - `regular`: original title, lead, and body
-  - `facts_only`: rewritten title + rewritten lead, original body
-  - `clickbait`: rewritten title + rewritten lead, original body
+  - `facts_only`:
+    - body rewritten into a neutral/facts-only version at about 300 words when the source is longer
+    - then title + lead rewritten from that facts-only body
+  - `clickbait`:
+    - title + lead rewritten from the facts-only variant
+    - then body rewritten from the facts-only variant under the clickbait framing
 - The active LLM method is:
-  - `tone_llm_title_lead_v1`
-- Legacy body prompt files still exist under `modules/` for reference, but they are not part of the active rewrite pipeline.
+  - `tone_llm_staged_v1`
+- Legacy module prompt files can remain local for reference, but `prompts/runtime/` is now the runtime source of truth.
 
 ### 6. App delivery
 - The app-side feed client lives in `services/articles.ts`.

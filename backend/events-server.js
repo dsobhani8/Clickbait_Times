@@ -2356,7 +2356,11 @@ async function rewriteSnapshotToneVariants({
   for (const row of rows) {
     const article = rowToArticle(row);
     const fallbackVariants = buildVariants(article);
-    for (const variantKey of LLM_VARIANT_KEYS) {
+    let latestFactsOnlyVariant = fallbackVariants.facts_only;
+    const orderedVariantKeys = LLM_VARIANT_KEYS.includes("facts_only")
+      ? ["facts_only", ...LLM_VARIANT_KEYS.filter((key) => key !== "facts_only")]
+      : [...LLM_VARIANT_KEYS];
+    for (const variantKey of orderedVariantKeys) {
       const fallbackVariant = fallbackVariants[variantKey];
       if (!fallbackVariant) continue;
 
@@ -2373,10 +2377,16 @@ async function rewriteSnapshotToneVariants({
         const { variant, rewriteMethod } = await rewriteVariantForArticle({
           article,
           variantKey,
-          fallbackVariant
+          fallbackVariant,
+          factsOnlyVariant:
+            variantKey === "clickbait" ? latestFactsOnlyVariant : null
         });
         const finalizedVariant = variant || fallbackVariant;
         const writeAt = new Date().toISOString();
+
+        if (variantKey === "facts_only") {
+          latestFactsOnlyVariant = finalizedVariant;
+        }
 
         await upsertSnapshotVariant({
           snapshotId,

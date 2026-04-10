@@ -4,6 +4,8 @@ const {
   buildDefaultVariantMethodMap
 } = require("./rewrite-specs");
 const {
+  buildRegularBodyPrompt,
+  buildVariantBodyPrompt,
   buildTitleLeadPrompt,
   formatArticle
 } = require("./rewrite-prompts");
@@ -25,14 +27,19 @@ const REWRITE_MAX_ATTEMPTS = Number.isFinite(REWRITE_MAX_ATTEMPTS_RAW)
   ? Math.max(1, Math.min(5, Math.round(REWRITE_MAX_ATTEMPTS_RAW)))
   : 2;
 const REWRITE_PIPELINE = process.env.REWRITE_PIPELINE || "paper_v1";
-const TONE_LLM_METHOD = "tone_llm_title_lead_v1";
-const TONE_LLM_REGULAR_METHOD = "tone_llm_regular_v1";
+const TONE_LLM_METHOD = "tone_llm_staged_v1";
+const TONE_LLM_REGULAR_METHOD = "tone_llm_regular_body_v1";
 const TONE_LLM_PENDING_METHOD = "tone_llm_pending_v1";
 
 const SYSTEM_PROMPT_TITLE_LEAD = [
   "Follow the user instructions exactly.",
   "Return only valid JSON with keys: title, lead.",
   "title and lead must be strings."
+].join(" ");
+const SYSTEM_PROMPT_BODY = [
+  "Follow the user instructions exactly.",
+  "Return only the requested rewritten article body as plain text.",
+  "Do not return JSON, labels, bullets, step headings, or code fences."
 ].join(" ");
 
 function isToneLlmEnabled() {
@@ -226,11 +233,124 @@ async function callOpenAiJson({ systemPrompt, userPrompt, temperature }) {
   throw lastError instanceof Error ? lastError : new Error("OpenAI rewrite failed.");
 }
 
+async function callOpenAiText({ systemPrompt, userPrompt, temperature }) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= REWRITE_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          temperature:
+            Number.isFinite(temperature) && temperature >= 0
+              ? temperature
+              : OPENAI_TEMPERATURE,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
+            },
+            {
+              role: "user",
+              content: userPrompt
+            }
+          ]
+        }),
+        signal: controller.signal
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          `OpenAI rewrite failed: ${response.status} ${response.statusText} - ${text}`
+        );
+      }
+
+      let payload = null;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = null;
+      }
+
+      const content = extractMessageContent(payload?.choices?.[0]?.message?.content);
+      const normalized = sanitizeBodyRewriteText(content);
+      if (!normalized) {
+        throw new Error("OpenAI rewrite returned empty text content.");
+      }
+
+      return normalized;
+    } catch (error) {
+      const isAbort =
+        Boolean(error) &&
+        typeof error === "object" &&
+        "name" in error &&
+        error.name === "AbortError";
+      if (isAbort) {
+        lastError = new Error(
+          `OpenAI rewrite timed out after ${REWRITE_TIMEOUT_MS}ms (attempt ${attempt}/${REWRITE_MAX_ATTEMPTS}, model=${OPENAI_MODEL}).`
+        );
+      } else {
+        lastError = error;
+      }
+      if (attempt < REWRITE_MAX_ATTEMPTS) {
+        await sleep(400 * attempt);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("OpenAI rewrite failed.");
+}
+
 function normalizeNonEmptyString(value) {
   if (typeof value !== "string") {
     return "";
   }
   return value.trim();
+}
+
+function sanitizeBodyRewriteText(text) {
+  const cleaned = sanitizeModelOutput(text);
+  if (!cleaned) {
+    return "";
+  }
+
+  return cleaned
+    .replace(/^(?:rewritten article|rewrite|facts-only article|clickbait article)\s*:\s*/i, "")
+    .trim();
+}
+
+function composeFactsOnlyTitleLeadInput(bodyParagraphs) {
+  return normalizeBody(bodyParagraphs).join("\n\n");
+}
+
+function composeClickbaitTitleLeadInput(factsOnlyVariant) {
+  const sections = [];
+  if (typeof factsOnlyVariant?.title === "string" && factsOnlyVariant.title.trim()) {
+    sections.push(`Neutral Title:\n${factsOnlyVariant.title.trim()}`);
+  }
+  if (typeof factsOnlyVariant?.lead === "string" && factsOnlyVariant.lead.trim()) {
+    sections.push(`Neutral Lead:\n${factsOnlyVariant.lead.trim()}`);
+  }
+  const bodyText = normalizeBody(factsOnlyVariant?.body).join("\n\n");
+  if (bodyText) {
+    sections.push(`Original Body:\n${bodyText}`);
+  }
+  return sections.join("\n\n").trim();
+}
+
+function toParagraphText(body) {
+  return normalizeBody(body).join("\n\n");
 }
 
 async function rewriteVariantTitleLead({
@@ -256,7 +376,17 @@ async function rewriteVariantTitleLead({
 }
 
 async function rewriteRegularArticleForBase(article) {
-  return toArticleText(article);
+  if (!isToneLlmEnabled()) {
+    return toArticleText(article);
+  }
+
+  return callOpenAiText({
+    systemPrompt: SYSTEM_PROMPT_BODY,
+    userPrompt: buildRegularBodyPrompt({
+      articleInput: toArticleInput(article)
+    }),
+    temperature: OPENAI_TEMPERATURE
+  });
 }
 
 async function rewriteRegularVariantForArticle(article, fallbackVariant = null) {
@@ -268,11 +398,39 @@ async function rewriteRegularVariantForArticle(article, fallbackVariant = null) 
       body: normalizeBody(article?.body)
     };
 
-  return {
-    variant: fallback,
-    rewrittenBodyText: toArticleText(article),
-    rewriteMethod: RULE_REWRITE_METHOD
-  };
+  if (!isToneLlmEnabled()) {
+    return {
+      variant: fallback,
+      rewrittenBodyText: toArticleText(article),
+      rewriteMethod: RULE_REWRITE_METHOD
+    };
+  }
+
+  try {
+    const rewrittenBodyText = await rewriteRegularArticleForBase(article);
+    const rewrittenBody = normalizeBody(rewrittenBodyText);
+    const variant = {
+      title: fallback.title,
+      lead: fallback.lead,
+      body: rewrittenBody.length > 0 ? rewrittenBody : fallback.body
+    };
+
+    return {
+      variant,
+      rewrittenBodyText: toParagraphText(variant.body),
+      rewriteMethod: TONE_LLM_REGULAR_METHOD
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[rewrite-tone-llm] regular fallback article=${article?.id ?? "unknown"}: ${message}`
+    );
+    return {
+      variant: fallback,
+      rewrittenBodyText: toArticleText(article),
+      rewriteMethod: RULE_REWRITE_METHOD
+    };
+  }
 }
 
 async function buildVariantsForArticle(article) {
@@ -286,18 +444,25 @@ async function buildVariantsForArticle(article) {
     };
   }
 
-  for (const variantKey of LLM_VARIANT_KEYS) {
-    const fallbackVariant = fallback[variantKey];
-    if (!fallbackVariant) continue;
-
-    const { variant, rewriteMethod } = await rewriteVariantForArticle({
+  if (LLM_VARIANT_KEYS.includes("facts_only")) {
+    const factsOnlyResult = await rewriteVariantForArticle({
       article,
-      variantKey,
-      fallbackVariant,
-      regularArticleText: null
+      variantKey: "facts_only",
+      fallbackVariant: fallback.facts_only
     });
-    fallback[variantKey] = variant;
-    variantMethods[variantKey] = rewriteMethod;
+    fallback.facts_only = factsOnlyResult.variant;
+    variantMethods.facts_only = factsOnlyResult.rewriteMethod;
+  }
+
+  if (LLM_VARIANT_KEYS.includes("clickbait")) {
+    const clickbaitResult = await rewriteVariantForArticle({
+      article,
+      variantKey: "clickbait",
+      fallbackVariant: fallback.clickbait,
+      factsOnlyVariant: fallback.facts_only
+    });
+    fallback.clickbait = clickbaitResult.variant;
+    variantMethods.clickbait = clickbaitResult.rewriteMethod;
   }
 
   return {
@@ -310,7 +475,8 @@ async function rewriteVariantForArticle({
   article,
   variantKey,
   fallbackVariant,
-  regularArticleText = null
+  regularArticleText = null,
+  factsOnlyVariant = null
 }) {
   const fallback =
     fallbackVariant ||
@@ -327,36 +493,150 @@ async function rewriteVariantForArticle({
     };
   }
 
-  try {
-    const articleText =
-      normalizeNonEmptyString(regularArticleText) || rewriteRegularArticleForBase(article);
-    const { title, lead } = await rewriteVariantTitleLead({
-      variantKey,
-      articleText: await articleText,
-      fallbackVariant: fallback
-    });
+  if (variantKey === "facts_only") {
+    let rewriteMethod = RULE_REWRITE_METHOD;
+    let body = fallback.body;
+
+    try {
+      const factsOnlyBodyText =
+        normalizeNonEmptyString(regularArticleText) ||
+        (await rewriteRegularArticleForBase(article));
+      const rewrittenBody = normalizeBody(factsOnlyBodyText);
+      if (rewrittenBody.length > 0) {
+        body = rewrittenBody;
+        rewriteMethod = TONE_LLM_METHOD;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[rewrite-tone-llm] facts_only body fallback article=${article?.id ?? "unknown"}: ${message}`
+      );
+    }
+
+    const bodyBackedVariant = {
+      title: fallback.title,
+      lead: fallback.lead,
+      body
+    };
+
+    try {
+      const { title, lead } = await rewriteVariantTitleLead({
+        variantKey,
+        articleText: composeFactsOnlyTitleLeadInput(body),
+        fallbackVariant: bodyBackedVariant
+      });
+      return {
+        variant: validateVariantOutput(
+          {
+            title,
+            lead,
+            body
+          },
+          bodyBackedVariant
+        ),
+        rewriteMethod: TONE_LLM_METHOD
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[rewrite-tone-llm] facts_only title/lead fallback article=${article?.id ?? "unknown"}: ${message}`
+      );
+      return {
+        variant: bodyBackedVariant,
+        rewriteMethod
+      };
+    }
+  }
+
+  if (variantKey === "clickbait") {
+    const neutralBase =
+      factsOnlyVariant && typeof factsOnlyVariant === "object"
+        ? {
+            title:
+              normalizeNonEmptyString(factsOnlyVariant.title) || fallback.title,
+            lead: normalizeNonEmptyString(factsOnlyVariant.lead) || fallback.lead,
+            body:
+              normalizeBody(factsOnlyVariant.body).length > 0
+                ? normalizeBody(factsOnlyVariant.body)
+                : fallback.body
+          }
+        : {
+            title: fallback.title,
+            lead: fallback.lead,
+            body: fallback.body
+          };
+
+    let title = neutralBase.title;
+    let lead = neutralBase.lead;
+    let body = neutralBase.body;
+    let rewriteMethod = RULE_REWRITE_METHOD;
+
+    try {
+      const next = await rewriteVariantTitleLead({
+        variantKey,
+        articleText: composeClickbaitTitleLeadInput(neutralBase),
+        fallbackVariant: {
+          title,
+          lead,
+          body
+        }
+      });
+      title = next.title;
+      lead = next.lead;
+      rewriteMethod = TONE_LLM_METHOD;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[rewrite-tone-llm] clickbait title/lead fallback article=${article?.id ?? "unknown"}: ${message}`
+      );
+    }
+
+    try {
+      const rewrittenBodyText = await callOpenAiText({
+        systemPrompt: SYSTEM_PROMPT_BODY,
+        userPrompt: buildVariantBodyPrompt({
+          variantKey,
+          articleInput: {
+            title,
+            lead,
+            body
+          }
+        }),
+        temperature: OPENAI_TEMPERATURE
+      });
+      const rewrittenBody = normalizeBody(rewrittenBodyText);
+      if (rewrittenBody.length > 0) {
+        body = rewrittenBody;
+        rewriteMethod = TONE_LLM_METHOD;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[rewrite-tone-llm] clickbait body fallback article=${article?.id ?? "unknown"}: ${message}`
+      );
+    }
 
     return {
       variant: validateVariantOutput(
         {
           title,
           lead,
-          body: fallback.body
+          body
         },
-        fallback
+        {
+          title: neutralBase.title,
+          lead: neutralBase.lead,
+          body: neutralBase.body
+        }
       ),
-      rewriteMethod: TONE_LLM_METHOD
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[rewrite-tone-llm] ${variantKey} fallback article=${article?.id ?? "unknown"}: ${message}`
-    );
-    return {
-      variant: fallback,
-      rewriteMethod: RULE_REWRITE_METHOD
+      rewriteMethod
     };
   }
+
+  return {
+    variant: fallback,
+    rewriteMethod: RULE_REWRITE_METHOD
+  };
 }
 
 function currentRewriteMethod() {

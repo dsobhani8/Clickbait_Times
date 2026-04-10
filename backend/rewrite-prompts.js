@@ -1,19 +1,18 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const REGULAR_BODY_PROMPT_FILE =
-  "modules/b_summary_metadata/regular_summary/prompts/regular_body.py";
+const REGULAR_BODY_PROMPT_FILE = "prompts/runtime/regular_body_rewrite.py";
 const REGULAR_TITLE_LEAD_PROMPT_FILE =
-  "modules/b_summary_metadata/regular_summary/prompts/regular_title_lead.py";
+  "prompts/runtime/regular_title_lead_rewrite.py";
 
 const VARIANT_PROMPT_FILES = Object.freeze({
-  facts_only: "modules/d_versions/facts_only/prompts/facts_only_body.py",
-  clickbait: "modules/d_versions/clickbait/prompts/clickbait_body.py"
+  facts_only: "prompts/runtime/regular_body_rewrite.py",
+  clickbait: "prompts/runtime/clickbait_body_rewrite.py"
 });
 
 const TITLE_LEAD_PROMPT_FILES = Object.freeze({
-  facts_only: "modules/d_versions/facts_only/prompts/facts_only_title_lead.py",
-  clickbait: "modules/d_versions/clickbait/prompts/clickbait_title_lead.py"
+  facts_only: "prompts/runtime/regular_title_lead_rewrite.py",
+  clickbait: "prompts/runtime/clickbait_title_lead_rewrite.py"
 });
 
 function extractFirstDocstring(source, absolutePath) {
