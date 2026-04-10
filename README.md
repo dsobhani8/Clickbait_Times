@@ -58,9 +58,6 @@ Reference material intentionally kept in the repo:
 - `docs/news_customization_with_ai.txt`
 - `docs/news_customization_with_ai_extracted.txt`
 
-Archived legacy SQLite helper scripts:
-- `archive/legacy-sqlite-tools/`
-
 Local-only reference/data paths intentionally not tracked in Git:
 - `modules.zip`
 - `ingar_shared/`
@@ -314,6 +311,5 @@ Recommended production scheduling:
 
 ## Repository Notes
 
-- The old SQLite analytics helper scripts were archived under `archive/legacy-sqlite-tools/` because the live system now writes to Supabase Postgres.
 - `backend/analytics-events.db*` are local development artifacts, not source-controlled product assets.
 - The Python paper pipeline and research artifacts remain in the repo for reference only.

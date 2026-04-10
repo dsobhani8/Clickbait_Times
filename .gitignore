@@ -11,5 +11,6 @@ __pycache__/
 ingar_shared/
 sensationalized_classifier/
 modules.zip
+archive/legacy-sqlite-tools/
 modules/b_summary_metadata/regular_summary/prompts/*.py
 modules/d_versions/*/prompts/*.py
