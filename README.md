@@ -23,8 +23,8 @@ Mobile news experiment app with:
 
 ### 3. Topic Classification
 - Classifier code: `backend/topic-classifier.js`
-- Active prompt location: `backend/topic-classifier.js`
-  - constant: `TOPIC_CLASSIFIER_SYSTEM_PROMPT`
+- Active method: keyword-based bucketing
+  - constant: `TOPIC_CLASSIFIER_METHOD`
 - Allowed labels:
   - `Technology`
   - `Politics`
@@ -34,6 +34,8 @@ Mobile news experiment app with:
   - title
   - lead
   - first few body paragraphs
+- The article is assigned to the topic bucket with the highest weighted keyword score.
+- If no topic clearly wins, the article is assigned to `None`.
 
 ### 4. Feed Selection
 - Orchestration: `backend/events-server.js`
@@ -84,9 +86,10 @@ Original article
 
 ## Prompt Locations
 
-### Topic Classification Prompt
+### Topic Classification
 - `backend/topic-classifier.js`
-  - `TOPIC_CLASSIFIER_SYSTEM_PROMPT`
+  - keyword-based classifier
+  - no runtime prompt file
 
 ### Rewrite Prompts
 - Prompt wiring:
