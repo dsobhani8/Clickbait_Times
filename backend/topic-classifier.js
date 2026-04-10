@@ -4,14 +4,7 @@ const TOPIC_CLASSIFIER_MODEL =
   process.env.TOPIC_CLASSIFIER_MODEL ||
   process.env.OPENAI_MODEL ||
   "gpt-5-mini-2025-08-07";
-const TOPIC_CLASSIFIER_PROFILE_RAW =
-  process.env.TOPIC_CLASSIFIER_PROFILE ||
-  process.env.TOPIC_CLASSIFIER_PROMPT_PROFILE ||
-  "focused";
-const TOPIC_CLASSIFIER_PROFILE =
-  String(TOPIC_CLASSIFIER_PROFILE_RAW).trim().toLowerCase() === "modules"
-    ? "modules"
-    : "focused";
+const TOPIC_CLASSIFIER_PROFILE = "focused";
 const TOPIC_CLASSIFIER_ENABLED =
   String(process.env.TOPIC_CLASSIFIER_ENABLED || "true").toLowerCase() !==
   "false";
@@ -29,55 +22,71 @@ const FOCUSED_TOPIC_OPTIONS = Object.freeze([
   "Politics",
   "Economy"
 ]);
-const MODULES_TOPIC_OPTIONS = Object.freeze([
-  "Politics",
-  "Economy",
-  "U.S.",
-  "World",
-  "Lifestyle",
-  "Sports"
-]);
 const TOPIC_NONE = "None";
-const TOPIC_OPTIONS =
-  TOPIC_CLASSIFIER_PROFILE === "modules"
-    ? MODULES_TOPIC_OPTIONS
-    : FOCUSED_TOPIC_OPTIONS;
+const TOPIC_OPTIONS = FOCUSED_TOPIC_OPTIONS;
 const TOPIC_DEFAULT_FILTERS_CSV = TOPIC_OPTIONS.join(",");
 const topicCache = new Map();
+const TECHNOLOGY_KEYWORDS = Object.freeze([
+  "ai",
+  "artificial intelligence",
+  "software",
+  "chip",
+  "semiconductor",
+  "smartphone",
+  "cyber",
+  "startup",
+  "technology",
+  "tech company"
+]);
+const POLITICS_KEYWORDS = Object.freeze([
+  "election",
+  "congress",
+  "senate",
+  "parliament",
+  "president",
+  "prime minister",
+  "campaign",
+  "lawmakers",
+  "government",
+  "policy vote"
+]);
+const ECONOMY_KEYWORDS = Object.freeze([
+  "inflation",
+  "gdp",
+  "jobs",
+  "unemployment",
+  "interest rate",
+  "federal reserve",
+  "stock market",
+  "earnings",
+  "economy",
+  "recession"
+]);
 
-const FOCUSED_SYSTEM_PROMPT = [
-  "Classify a news article into exactly one topic label.",
-  `Allowed labels: ${FOCUSED_TOPIC_OPTIONS.join(", ")}, ${TOPIC_NONE}.`,
-  "Use None when the article is not primarily about Technology, Politics, or Economy.",
-  "Return only JSON with key: topic."
-].join(" ");
-
-const MODULES_SYSTEM_PROMPT = [
-  "You have two tasks:",
-  "1) Assign the most relevant category to the given article.",
-  "2) Assign the most relevant tag to the given article.",
+const TOPIC_CLASSIFIER_SYSTEM_PROMPT = [
+  "You are classifying a news article into exactly one primary topic.",
+  `Allowed labels: ${TOPIC_OPTIONS.join(", ")}, ${TOPIC_NONE}.`,
   "",
-  "Categories to choose from:",
-  "- Politics: News related to politics and government in the United States (e.g. news about a new law).",
-  "- Economy: News related to business and the economy in the United States (e.g. news about inflation, the stock market or also business news).",
-  "- U.S.: News related to events happening in the United States (e.g. a plane crash).",
-  "- World: News related to events happening outside the United States (e.g. an election in Venezuela or war in the middle east).",
-  "- Lifestyle: News related to lifestyle and culture (e.g. news about Taylor Swift).",
-  "- Sports: News related to sports (e.g. news about Football).",
+  "Decision rule:",
+  "- Pick the one label that best matches the article's central news angle.",
+  "- Ignore brief mentions, background context, secondary themes, and downstream effects.",
+  `- Use "${TOPIC_NONE}" when the main subject is not primarily ${TOPIC_OPTIONS.join(", ")}, including sports, entertainment, lifestyle, health, crime, weather, culture, science without a clear technology angle, or general world news outside the allowed labels.`,
   "",
-  "Tag guidelines:",
-  "- There is no fixed list of tags; create a fitting tag from scratch.",
-  "- The tag should be more specific than the category.",
-  "- The tag should be a single word or a very short phrase.",
-  "- The tag should be informative to the reader but not too specific.",
+  "Label definitions:",
+  '- "Technology": the article is mainly about software, hardware, AI, cybersecurity, semiconductors, consumer devices, tech companies, startups, or digital platforms.',
+  '- "Politics": the article is mainly about governments, elections, campaigns, public officials, legislation, courts, public policy, diplomacy, or political power.',
+  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, or macroeconomic trends.',
   "",
-  "Examples:",
-  "- Plane crash in the United States -> category: U.S., tag: Plane Accident",
-  "- New law in the United States -> category: Politics, tag: New Legislation",
-  "- Presidential race 2024 in the United States -> category: Politics, tag: Election 2024",
+  "Tie-breakers:",
+  '- If the story is about a government action, election, law, or political dispute, choose "Politics" even if it affects the economy or technology.',
+  '- If the story is about markets, inflation, jobs, company earnings, or economic conditions, choose "Economy" unless the core event is primarily political.',
+  '- If the story is about a product, platform, AI model, cyber incident, chipmaker, or tech company operation, choose "Technology" unless the core event is primarily political or macroeconomic.',
+  '- For company news, choose "Technology" only when the company is a tech company and the article is mainly about its technology, products, platforms, or operations; choose "Economy" when the focus is earnings, stock moves, layoffs, demand, or broader business conditions.',
   "",
-  "Return only JSON with keys: category and tag."
-].join(" ");
+  "Output requirements:",
+  '- Return exactly one JSON object and no other text.',
+  '- Use this format: {"topic":"<label>"}'
+].join("\n");
 
 function extractMessageContent(messageContent) {
   if (typeof messageContent === "string") {
@@ -160,32 +169,6 @@ function normalizeTopic(value) {
     return "Economy";
   }
   if (
-    normalized === "u.s." ||
-    normalized === "u.s" ||
-    normalized === "us" ||
-    normalized === "u_s" ||
-    normalized === "united states"
-  ) {
-    return "U.S.";
-  }
-  if (
-    normalized === "world" ||
-    normalized === "international" ||
-    normalized === "global"
-  ) {
-    return "World";
-  }
-  if (
-    normalized === "lifestyle" ||
-    normalized === "culture" ||
-    normalized === "entertainment"
-  ) {
-    return "Lifestyle";
-  }
-  if (normalized === "sports" || normalized === "sport") {
-    return "Sports";
-  }
-  if (
     normalized === "none" ||
     normalized === "none_of_the_above" ||
     normalized === "other"
@@ -193,10 +176,7 @@ function normalizeTopic(value) {
     return TOPIC_NONE;
   }
 
-  // Fuzzy matches for verbose model outputs (e.g., "Category: Sports")
-  if (normalized.includes("sport")) {
-    return "Sports";
-  }
+  // Fuzzy matches for verbose model outputs (e.g., "Category: Economy")
   if (normalized.includes("polit")) {
     return "Politics";
   }
@@ -206,19 +186,6 @@ function normalizeTopic(value) {
     normalized.includes("finance")
   ) {
     return "Economy";
-  }
-  if (
-    normalized.includes("u.s") ||
-    normalized.includes("united states") ||
-    /\bus\b/.test(normalized)
-  ) {
-    return "U.S.";
-  }
-  if (normalized.includes("world") || normalized.includes("international")) {
-    return "World";
-  }
-  if (normalized.includes("lifestyle") || normalized.includes("culture")) {
-    return "Lifestyle";
   }
   if (normalized.includes("tech")) {
     return "Technology";
@@ -280,118 +247,10 @@ function heuristicClassification(article) {
     .join(" ")
     .toLowerCase();
 
-  if (TOPIC_CLASSIFIER_PROFILE === "modules") {
-    const score = {
-      Politics: scoreKeywords(text, [
-        "election",
-        "congress",
-        "senate",
-        "parliament",
-        "president",
-        "prime minister",
-        "campaign",
-        "lawmakers",
-        "government",
-        "supreme court"
-      ]),
-      Economy: scoreKeywords(text, [
-        "inflation",
-        "gdp",
-        "jobs",
-        "unemployment",
-        "interest rate",
-        "federal reserve",
-        "stock market",
-        "earnings",
-        "economy",
-        "recession"
-      ]),
-      "U.S.": scoreKeywords(text, [
-        "united states",
-        "u.s.",
-        "us",
-        "state",
-        "county",
-        "governor",
-        "city council"
-      ]),
-      World: scoreKeywords(text, [
-        "international",
-        "foreign",
-        "europe",
-        "asia",
-        "africa",
-        "middle east",
-        "ukraine",
-        "israel"
-      ]),
-      Lifestyle: scoreKeywords(text, [
-        "lifestyle",
-        "culture",
-        "music",
-        "movie",
-        "fashion",
-        "food",
-        "travel",
-        "celebrity"
-      ]),
-      Sports: scoreKeywords(text, [
-        "sports",
-        "football",
-        "basketball",
-        "soccer",
-        "baseball",
-        "hockey",
-        "tournament",
-        "coach"
-      ])
-    };
-
-    const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
-    const topic = !best || best[1] <= 0 ? TOPIC_NONE : best[0];
-    return {
-      topic,
-      tag: fallbackTag(article, topic)
-    };
-  }
-
   const score = {
-    Technology: scoreKeywords(text, [
-      "ai",
-      "artificial intelligence",
-      "software",
-      "chip",
-      "semiconductor",
-      "smartphone",
-      "cyber",
-      "startup",
-      "technology",
-      "tech company"
-    ]),
-    Politics: scoreKeywords(text, [
-      "election",
-      "congress",
-      "senate",
-      "parliament",
-      "president",
-      "prime minister",
-      "campaign",
-      "lawmakers",
-      "government",
-      "policy vote"
-    ]),
-    Economy: scoreKeywords(text, [
-      "inflation",
-      "gdp",
-      "jobs",
-      "unemployment",
-      "interest rate",
-      "federal reserve",
-      "stock market",
-      "earnings",
-      "economy",
-      "recession"
-    ])
+    Technology: scoreKeywords(text, TECHNOLOGY_KEYWORDS),
+    Politics: scoreKeywords(text, POLITICS_KEYWORDS),
+    Economy: scoreKeywords(text, ECONOMY_KEYWORDS)
   };
   const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
   const topic = !best || best[1] <= 0 ? TOPIC_NONE : best[0];
@@ -422,10 +281,7 @@ async function classifyWithLlm(article) {
         messages: [
           {
             role: "system",
-            content:
-              TOPIC_CLASSIFIER_PROFILE === "modules"
-                ? MODULES_SYSTEM_PROMPT
-                : FOCUSED_SYSTEM_PROMPT
+            content: TOPIC_CLASSIFIER_SYSTEM_PROMPT
           },
           {
             role: "user",
@@ -452,17 +308,8 @@ async function classifyWithLlm(article) {
 
     const content = extractMessageContent(payload?.choices?.[0]?.message?.content);
     const parsed = parseJsonObject(content);
-    if (TOPIC_CLASSIFIER_PROFILE === "modules") {
-      const category = normalizeTopic(parsed?.category || parsed?.topic);
-      const topic = MODULES_TOPIC_OPTIONS.includes(category) ? category : TOPIC_NONE;
-      return {
-        topic,
-        tag: normalizeTag(parsed?.tag) || fallbackTag(article, topic)
-      };
-    }
-
     const topicCandidate = normalizeTopic(parsed?.topic || parsed?.category);
-    const topic = FOCUSED_TOPIC_OPTIONS.includes(topicCandidate)
+    const topic = TOPIC_OPTIONS.includes(topicCandidate)
       ? topicCandidate
       : TOPIC_NONE;
     return {
