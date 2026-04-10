@@ -6,3 +6,8 @@ backend/*.db
 .env.*
 .DS_Store
 *.log
+__pycache__/
+*.pyc
+ingar_shared/
+sensationalized_classifier/
+modules.zip
