@@ -26,42 +26,6 @@ const TOPIC_NONE = "None";
 const TOPIC_OPTIONS = FOCUSED_TOPIC_OPTIONS;
 const TOPIC_DEFAULT_FILTERS_CSV = TOPIC_OPTIONS.join(",");
 const topicCache = new Map();
-const TECHNOLOGY_KEYWORDS = Object.freeze([
-  "ai",
-  "artificial intelligence",
-  "software",
-  "chip",
-  "semiconductor",
-  "smartphone",
-  "cyber",
-  "startup",
-  "technology",
-  "tech company"
-]);
-const POLITICS_KEYWORDS = Object.freeze([
-  "election",
-  "congress",
-  "senate",
-  "parliament",
-  "president",
-  "prime minister",
-  "campaign",
-  "lawmakers",
-  "government",
-  "policy vote"
-]);
-const ECONOMY_KEYWORDS = Object.freeze([
-  "inflation",
-  "gdp",
-  "jobs",
-  "unemployment",
-  "interest rate",
-  "federal reserve",
-  "stock market",
-  "earnings",
-  "economy",
-  "recession"
-]);
 
 const TOPIC_CLASSIFIER_SYSTEM_PROMPT = [
   "You are classifying a news article into exactly one primary topic.",
@@ -230,36 +194,6 @@ function fallbackTag(article, topic) {
   return "General News";
 }
 
-function scoreKeywords(text, keywords) {
-  let score = 0;
-  for (const keyword of keywords) {
-    if (text.includes(keyword)) score += 1;
-  }
-  return score;
-}
-
-function heuristicClassification(article) {
-  const text = [
-    article?.title || "",
-    article?.lead || "",
-    ...(Array.isArray(article?.body) ? article.body : [])
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  const score = {
-    Technology: scoreKeywords(text, TECHNOLOGY_KEYWORDS),
-    Politics: scoreKeywords(text, POLITICS_KEYWORDS),
-    Economy: scoreKeywords(text, ECONOMY_KEYWORDS)
-  };
-  const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
-  const topic = !best || best[1] <= 0 ? TOPIC_NONE : best[0];
-  return {
-    topic,
-    tag: fallbackTag(article, topic)
-  };
-}
-
 async function classifyWithLlm(article) {
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -330,16 +264,14 @@ async function classifyArticleMetadata(article) {
     return topicCache.get(cacheKey);
   }
 
-  let classification = { topic: TOPIC_NONE, tag: fallbackTag(article, TOPIC_NONE) };
-  if (TOPIC_CLASSIFIER_ENABLED && OPENAI_API_KEY) {
-    try {
-      classification = await classifyWithLlm(article);
-    } catch {
-      classification = heuristicClassification(article);
-    }
-  } else {
-    classification = heuristicClassification(article);
+  if (!TOPIC_CLASSIFIER_ENABLED) {
+    throw new Error("Topic classifier is disabled.");
   }
+  if (!OPENAI_API_KEY) {
+    throw new Error("Topic classifier requires OPENAI_API_KEY.");
+  }
+
+  const classification = await classifyWithLlm(article);
 
   topicCache.set(cacheKey, classification);
   return classification;
