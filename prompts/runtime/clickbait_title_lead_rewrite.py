@@ -11,10 +11,6 @@ class ClickbaitTitleLeadRewrite(dspy.Signature):
     - a neutral, facts-only title
     - a neutral, facts-only lead
 
-    The current runtime may supply only the article text directly under "Article:".
-    If a neutral title and lead are present in the input, use them as the neutral package to intensify.
-    If they are not present, infer the neutral framing from the article text.
-
     Your task is to turn the neutral version into a clearly more clickbait version.
 
     The goal is not just stronger wording. The goal is to create a headline package that makes the story feel more dramatic, consequential, revealing, humiliating, or urgent than the article body fully delivers.
@@ -36,7 +32,7 @@ class ClickbaitTitleLeadRewrite(dspy.Signature):
     4. A secondary detail may become the hook if it sharpens the broader stakes or conflict; do not make the story seem mainly about a different event.
     5. When choosing between two defensible framings, prefer the sharper one.
     6. Title: maximum 11 words.
-    7. Lead: exactly 1 sentence.
+    7. Lead: exactly 1 sentence, maximum 25 words.
     8. Title and lead must work as a package: title hooks, lead escalates.
     9. Do not let the lead go neutral; it should continue the clickbait framing.
     10. For political and economic news, avoid playful or glib clickbait; prefer serious, high-stakes, conflict-oriented framing.
@@ -76,6 +72,7 @@ class ClickbaitTitleLeadRewrite(dspy.Signature):
     - the output creates an expectation gap
     - the headline and lead still describe the same underlying story
     - nothing essential to the factual core has been changed
+    - the lead is 25 words or fewer
 
     --- EXAMPLES ---
 
@@ -117,6 +114,34 @@ class ClickbaitTitleLeadRewrite(dspy.Signature):
 
     Clickbait Lead:
     Inflation may be cooling, but the real fear is where the slowdown hits first-and how ugly it gets.
+
+    Boundary Example 1: Certainty inflation is allowed; invented motive is not
+
+    Article basis:
+    Officials warned the shutdown could raise prices.
+
+    Acceptable clickbait:
+    The shutdown is suddenly threatening higher prices.
+
+    Bad clickbait:
+    Shutdown Exposed as Deliberate Tactic to Punish Consumers
+
+    Why bad:
+    It invents motive and intent that the article does not support. The article describes a possible consequence, not a deliberate plot.
+
+    Boundary Example 2: Distorting stakes is allowed; changing the event is not
+
+    Article basis:
+    Officials warned the shutdown could raise prices.
+
+    Acceptable clickbait:
+    Shutdown Fears Grow as Price Warnings Spread
+
+    Bad clickbait:
+    Government Shutdown Sends Markets Into Freefall
+
+    Why bad:
+    It makes the headline about a different event. If the article says nothing about market collapse, the headline no longer describes the same underlying story.
 
     --- OUTPUT FORMAT ---
     Return only a valid JSON object with exactly these keys:
