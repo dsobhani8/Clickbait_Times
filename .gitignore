@@ -12,5 +12,6 @@ ingar_shared/
 sensationalized_classifier/
 modules.zip
 archive/legacy-sqlite-tools/
+README.local.md
 modules/b_summary_metadata/regular_summary/prompts/*.py
 modules/d_versions/*/prompts/*.py
