@@ -13,5 +13,6 @@ sensationalized_classifier/
 modules.zip
 archive/legacy-sqlite-tools/
 README.local.md
+News_Customization_with_AI.pdf
 modules/b_summary_metadata/regular_summary/prompts/*.py
 modules/d_versions/*/prompts/*.py
