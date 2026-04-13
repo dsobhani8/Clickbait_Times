@@ -4155,7 +4155,7 @@ app.get("/admin/topic-audit", (_req, res) => {
     main { max-width: 1280px; margin: 0 auto; }
     h1 { margin: 0 0 8px; font-size: 32px; }
     p { color: var(--muted); }
-    form { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 140px auto; gap: 10px; align-items: end; margin: 20px 0; padding: 16px; background: var(--card); border: 1px solid var(--border); }
+    form { display: grid; grid-template-columns: minmax(240px, 1fr) 100px 120px 130px auto; gap: 10px; align-items: end; margin: 20px 0; padding: 16px; background: var(--card); border: 1px solid var(--border); }
     label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
     input, select, button { font: inherit; padding: 9px 10px; border: 1px solid var(--border); background: white; }
     button { cursor: pointer; background: #1d1a16; color: white; }
@@ -4189,9 +4189,17 @@ app.get("/admin/topic-audit", (_req, res) => {
           <option value="None">None</option>
         </select>
       </label>
+      <label>Freshness
+        <select id="freshnessFilter" name="freshnessFilter">
+          <option value="All">All ages</option>
+          <option value="Fresh">Fresh only</option>
+          <option value="Stale">Stale only</option>
+        </select>
+      </label>
       <button type="submit">Load audit</button>
     </form>
     <p id="summary" class="muted"></p>
+    <p id="projection" class="muted"></p>
     <p id="error"></p>
     <table>
       <thead>
@@ -4215,14 +4223,18 @@ app.get("/admin/topic-audit", (_req, res) => {
     const form = document.getElementById("controls");
     const rows = document.getElementById("rows");
     const summary = document.getElementById("summary");
+    const projection = document.getElementById("projection");
     const error = document.getElementById("error");
     const tokenInput = document.getElementById("token");
     const topicFilter = document.getElementById("topicFilter");
+    const freshnessFilter = document.getElementById("freshnessFilter");
     const savedToken = window.sessionStorage.getItem("topicAuditAdminToken") || "";
     const savedTopicFilter = window.sessionStorage.getItem("topicAuditTopicFilter") || "All";
+    const savedFreshnessFilter = window.sessionStorage.getItem("topicAuditFreshnessFilter") || "All";
     let lastPayload = null;
     tokenInput.value = savedToken;
     topicFilter.value = savedTopicFilter;
+    freshnessFilter.value = savedFreshnessFilter;
 
     function text(value) {
       return value == null ? "" : String(value);
@@ -4241,6 +4253,45 @@ app.get("/admin/topic-audit", (_req, res) => {
       return span;
     }
 
+    function uniqueStrings(values) {
+      return Array.from(new Set(values.filter((value) => typeof value === "string" && value.length > 0)));
+    }
+
+    function getTopicTargets(payload, articles) {
+      const metadataTopics = Array.isArray(payload.run?.metadata?.topicTargets)
+        ? payload.run.metadata.topicTargets
+        : [];
+      const selectorTopics = Array.isArray(payload.run?.metadata?.feedSelectorStats)
+        ? payload.run.metadata.feedSelectorStats.map((entry) => entry.topic)
+        : [];
+      const articleTopics = articles.map((item) => item.classification?.topic).filter((topic) => topic && topic !== "None");
+      return uniqueStrings([...metadataTopics, ...selectorTopics, ...articleTopics]);
+    }
+
+    function buildFreshnessProjection(payload, articles) {
+      const topicTargets = getTopicTargets(payload, articles);
+      const target = Number(payload.run?.feedPerTopicTarget || payload.run?.metadata?.perTopicTarget || 0);
+      const maxAgeHours = Number(payload.run?.freshArticleMaxAgeHours || 24);
+      if (topicTargets.length === 0 || !Number.isFinite(target) || target <= 0) {
+        return "";
+      }
+
+      const parts = topicTargets.map((topic) => {
+        const eligible = articles.filter((item) =>
+          item.eligibleForFeed && item.classification?.topic === topic
+        );
+        const freshEligible = eligible.filter((item) => item.isFresh);
+        const selectorCandidates = eligible.filter((item) => item.metadata?.selectorCandidate);
+        const freshSelectorCandidates = selectorCandidates.filter((item) => item.isFresh);
+        const projected = Math.min(target, freshEligible.length);
+        return topic + ": " + freshEligible.length + "/" + eligible.length +
+          " fresh eligible, " + freshSelectorCandidates.length + "/" + selectorCandidates.length +
+          " fresh candidates, max " + projected + "/" + target;
+      });
+
+      return maxAgeHours + "h projection " + parts.join("; ");
+    }
+
     function renderAudit(payload) {
       rows.replaceChildren();
       if (!payload || !payload.run) {
@@ -4249,14 +4300,23 @@ app.get("/admin/topic-audit", (_req, res) => {
 
       const selectedTopic = topicFilter.value || "All";
       const articles = Array.isArray(payload.articles) ? payload.articles : [];
-      const visibleArticles = selectedTopic === "All"
-        ? articles
-        : articles.filter((item) => (item.classification?.topic || "None") === selectedTopic);
+      const selectedFreshness = freshnessFilter.value || "All";
+      const visibleArticles = articles.filter((item) => {
+        const topicMatches =
+          selectedTopic === "All" ||
+          (item.classification?.topic || "None") === selectedTopic;
+        const freshnessMatches =
+          selectedFreshness === "All" ||
+          (selectedFreshness === "Fresh" && item.isFresh) ||
+          (selectedFreshness === "Stale" && !item.isFresh);
+        return topicMatches && freshnessMatches;
+      });
       const selectorStats = Array.isArray(payload.run.metadata?.feedSelectorStats)
         ? payload.run.metadata.feedSelectorStats
             .map((entry) => entry.topic + ": " + entry.selectedCount + "/" + entry.candidateCount)
             .join(", ")
         : "";
+      projection.textContent = buildFreshnessProjection(payload, articles);
       summary.textContent = [
         "Run " + payload.run.id,
         "created " + payload.run.createdAt,
@@ -4266,6 +4326,7 @@ app.get("/admin/topic-audit", (_req, res) => {
         "selected " + payload.run.selectedCount,
         "showing " + visibleArticles.length + "/" + articles.length,
         selectedTopic !== "All" ? "filter " + selectedTopic : "",
+        selectedFreshness !== "All" ? "freshness " + selectedFreshness : "",
         "method " + payload.run.classifierMethod,
         "model " + payload.run.classifierModel,
         selectorStats ? "selector " + selectorStats : ""
@@ -4301,10 +4362,18 @@ app.get("/admin/topic-audit", (_req, res) => {
       }
     });
 
+    freshnessFilter.addEventListener("change", () => {
+      window.sessionStorage.setItem("topicAuditFreshnessFilter", freshnessFilter.value || "All");
+      if (lastPayload) {
+        renderAudit(lastPayload);
+      }
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       rows.replaceChildren();
       summary.textContent = "Loading audit...";
+      projection.textContent = "";
       error.textContent = "";
 
       const token = tokenInput.value.trim();
@@ -4324,6 +4393,7 @@ app.get("/admin/topic-audit", (_req, res) => {
         }
         if (!payload.run) {
           summary.textContent = "No saved topic audit runs yet. Trigger a feed rebuild first.";
+          projection.textContent = "";
           return;
         }
 
@@ -4331,6 +4401,7 @@ app.get("/admin/topic-audit", (_req, res) => {
         renderAudit(payload);
       } catch (err) {
         summary.textContent = "";
+        projection.textContent = "";
         error.textContent = err instanceof Error ? err.message : String(err);
       }
     });
