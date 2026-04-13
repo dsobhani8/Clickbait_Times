@@ -4,6 +4,13 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const { Pool } = require("pg");
 const { fetchNewsApiArticles } = require("./newsapi-client");
+const {
+  FEED_SELECTOR_CANDIDATES_PER_TOPIC,
+  FEED_SELECTOR_ENABLED,
+  FEED_SELECTOR_METHOD,
+  FEED_SELECTOR_MODEL,
+  selectFeedArticlesForTopic
+} = require("./feed-selector");
 const { buildVariants } = require("./rewrite-variants");
 const {
   ALL_VARIANT_KEYS,
@@ -3875,6 +3882,10 @@ app.get("/health", async (_req, res) => {
     topicClassifierMethod: TOPIC_CLASSIFIER_METHOD,
     topicClassifierModel: TOPIC_CLASSIFIER_MODEL,
     topicClassifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
+    feedSelectorEnabled: FEED_SELECTOR_ENABLED,
+    feedSelectorMethod: FEED_SELECTOR_METHOD,
+    feedSelectorModel: FEED_SELECTOR_MODEL,
+    feedSelectorCandidatesPerTopic: FEED_SELECTOR_CANDIDATES_PER_TOPIC,
     feedTopicTargets: FEED_TOPIC_TARGETS,
     feedFetchMaxPages: FEED_FETCH_MAX_PAGES
   });
@@ -4164,7 +4175,7 @@ app.get("/admin/topic-audit", (_req, res) => {
 <body>
   <main>
     <h1>${escapeHtml(title)}</h1>
-    <p>Shows the saved topic classification audit from the latest feed rebuild. It does not rebuild or reclassify anything.</p>
+    <p>Shows the saved topic classification and feed-selector audit from the latest feed rebuild. It does not rebuild or reclassify anything.</p>
     <form id="controls">
       <label>Admin token <input id="token" name="token" type="password" autocomplete="off" placeholder="PIPELINE_ADMIN_TOKEN" /></label>
       <label>Run ID <input id="runId" name="runId" type="number" min="1" placeholder="latest" /></label>
@@ -4178,6 +4189,7 @@ app.get("/admin/topic-audit", (_req, res) => {
           <th>#</th>
           <th>Topic</th>
           <th>Status</th>
+          <th>Selector</th>
           <th>Published</th>
           <th>Words</th>
           <th>Fresh</th>
@@ -4241,6 +4253,11 @@ app.get("/admin/topic-audit", (_req, res) => {
           return;
         }
 
+        const selectorStats = Array.isArray(payload.run.metadata?.feedSelectorStats)
+          ? payload.run.metadata.feedSelectorStats
+              .map((entry) => entry.topic + ": " + entry.selectedCount + "/" + entry.candidateCount)
+              .join(", ")
+          : "";
         summary.textContent = [
           "Run " + payload.run.id,
           "created " + payload.run.createdAt,
@@ -4249,8 +4266,9 @@ app.get("/admin/topic-audit", (_req, res) => {
           "eligible " + payload.run.eligibleCount,
           "selected " + payload.run.selectedCount,
           "method " + payload.run.classifierMethod,
-          "model " + payload.run.classifierModel
-        ].join(" | ");
+          "model " + payload.run.classifierModel,
+          selectorStats ? "selector " + selectorStats : ""
+        ].filter(Boolean).join(" | ");
 
         for (const item of payload.articles) {
           const tr = document.createElement("tr");
@@ -4262,6 +4280,9 @@ app.get("/admin/topic-audit", (_req, res) => {
           const statusTd = document.createElement("td");
           statusTd.appendChild(pill(status, item.selectedForSnapshot ? "good" : "warn"));
           tr.appendChild(statusTd);
+          const selectorStatus = item.metadata?.feedSelectorReason ||
+            (item.metadata?.selectorCandidate ? "candidate" : "");
+          tr.appendChild(cell(selectorStatus));
           tr.appendChild(cell(item.publishedAt || ""));
           tr.appendChild(cell(item.wordCount));
           tr.appendChild(cell(item.isFresh ? "yes" : "no"));
@@ -4716,6 +4737,7 @@ app.get("/feed", async (req, res) => {
     let skippedOutOfTarget = 0;
     let freshSelectedCount = 0;
     let staleFallbackSelectedCount = 0;
+    const feedSelectorStats = [];
     const selectedArticles = [];
     const seenArticleKeys = new Set();
     const topicAuditItems = [];
@@ -4730,20 +4752,16 @@ app.get("/feed", async (req, res) => {
       }
     }
 
-    const countBucketArticles = () => {
-      let total = 0;
-      for (const topic of requestedTopicTargets) {
-        const entries = topicBuckets.get(topic);
-        if (Array.isArray(entries)) {
-          total += entries.length;
-        }
-      }
-      return total;
-    };
-
     const hasReachedTarget = () => {
       if (isBalancedAllRequest) {
-        return countBucketArticles() >= fetchTargetCount;
+        return requestedTopicTargets.every((topic) => {
+          const freshEntries = topicBuckets.get(topic);
+          const staleEntries = staleFallbackBuckets.get(topic);
+          const count =
+            (Array.isArray(freshEntries) ? freshEntries.length : 0) +
+            (Array.isArray(staleEntries) ? staleEntries.length : 0);
+          return count >= FEED_SELECTOR_CANDIDATES_PER_TOPIC;
+        });
       }
       return selectedArticles.length >= limit;
     };
@@ -4834,7 +4852,7 @@ app.get("/feed", async (req, res) => {
             (!Array.isArray(requestedTopicTargets) ||
               requestedTopicTargets.length === 0 ||
               requestedTopicTargets.includes(topic));
-          topicAuditItems.push({
+          const auditItem = {
             auditKey: candidateAuditKey,
             providerRank:
               providerRanksByArticleKey.get(candidateAuditKey) || 0,
@@ -4858,7 +4876,8 @@ app.get("/feed", async (req, res) => {
             classifierStatus: "classified",
             fallbackUsed: false,
             metadata: {}
-          });
+          };
+          topicAuditItems.push(auditItem);
           if (topic === TOPIC_NONE) {
             skippedNone += 1;
             continue;
@@ -4883,13 +4902,22 @@ app.get("/feed", async (req, res) => {
           if (isBalancedAllRequest) {
             const bucket = topicBuckets.get(topic);
             const staleBucket = staleFallbackBuckets.get(topic);
-            if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
-              if (isFreshEnoughArticle(mappedArticle, now)) {
+            const currentCandidateCount =
+              (Array.isArray(bucket) ? bucket.length : 0) +
+              (Array.isArray(staleBucket) ? staleBucket.length : 0);
+            if (currentCandidateCount < FEED_SELECTOR_CANDIDATES_PER_TOPIC) {
+              mappedArticle.providerRank =
+                providerRanksByArticleKey.get(candidateAuditKey) || 0;
+              mappedArticle.isFresh = isFreshEnoughArticle(mappedArticle, now);
+              auditItem.metadata.selectorCandidate = true;
+              if (mappedArticle.isFresh && Array.isArray(bucket)) {
                 bucket.push(mappedArticle);
-                freshSelectedCount += 1;
               } else if (Array.isArray(staleBucket)) {
                 staleBucket.push(mappedArticle);
               }
+            } else {
+              auditItem.metadata.selectorCandidate = false;
+              auditItem.skipReason = "candidate_pool_full";
             }
           } else if (isFreshEnoughArticle(mappedArticle, now)) {
             selectedArticles.push(mappedArticle);
@@ -4914,23 +4942,44 @@ app.get("/feed", async (req, res) => {
     }
 
     if (isBalancedAllRequest) {
-      for (const targetTopic of requestedTopicTargets) {
-        const targetBucket = topicBuckets.get(targetTopic);
-        const targetFallbackBucket = staleFallbackBuckets.get(targetTopic);
-        if (
-          Array.isArray(targetBucket) &&
-          Array.isArray(targetFallbackBucket) &&
-          targetBucket.length < FEED_PER_TOPIC_TARGET
-        ) {
-          while (
-            targetBucket.length < FEED_PER_TOPIC_TARGET &&
-            targetFallbackBucket.length > 0
-          ) {
-            const nextFallback = targetFallbackBucket.shift();
-            if (!nextFallback) {
-              break;
-            }
-            targetBucket.push(nextFallback);
+      for (const topic of requestedTopicTargets) {
+        const freshBucket = topicBuckets.get(topic);
+        const staleBucket = staleFallbackBuckets.get(topic);
+        const candidates = [
+          ...(Array.isArray(freshBucket) ? freshBucket : []),
+          ...(Array.isArray(staleBucket) ? staleBucket : [])
+        ].sort((left, right) => {
+          const leftRank = Number(left.providerRank || Number.MAX_SAFE_INTEGER);
+          const rightRank = Number(right.providerRank || Number.MAX_SAFE_INTEGER);
+          return leftRank - rightRank;
+        });
+        const selection = await selectFeedArticlesForTopic({
+          topic,
+          articles: candidates,
+          targetCount: FEED_PER_TOPIC_TARGET,
+          nowMs: now
+        });
+        feedSelectorStats.push({
+          topic,
+          method: selection.method,
+          model: selection.model,
+          fallbackUsed: Boolean(selection.fallbackUsed),
+          error: selection.error || null,
+          candidateCount: candidates.length,
+          selectedCount: selection.selected.length
+        });
+
+        for (const selected of selection.selected) {
+          const article = selected?.candidate?.article;
+          if (!article) {
+            continue;
+          }
+          article.feedSelectorReason =
+            selected.reason || "selected by feed selector";
+          selectedArticles.push(article);
+          if (isFreshEnoughArticle(article, now)) {
+            freshSelectedCount += 1;
+          } else {
             staleFallbackSelectedCount += 1;
           }
         }
@@ -4946,33 +4995,45 @@ app.get("/feed", async (req, res) => {
       }
     }
 
-    if (isBalancedAllRequest) {
-      for (const topic of requestedTopicTargets) {
-        const bucket = topicBuckets.get(topic);
-        if (!Array.isArray(bucket)) continue;
-        for (const article of bucket) {
-          selectedArticles.push(article);
-        }
-      }
-    }
-
     const selectedArticleKeys = new Set(selectedArticles.map((article) => articleAuditKey(article)));
+    const selectedArticleReasons = new Map(
+      selectedArticles.map((article) => [
+        articleAuditKey(article),
+        article.feedSelectorReason || null
+      ])
+    );
     for (const item of topicAuditItems) {
       if (selectedArticleKeys.has(item.auditKey)) {
         item.selectedForSnapshot = true;
         item.skipReason = "selected";
+        const reason = selectedArticleReasons.get(item.auditKey);
+        if (reason) {
+          item.metadata.feedSelectorReason = reason;
+        }
+      } else if (item.eligibleForFeed && item.metadata.selectorCandidate === false) {
+        item.skipReason = "candidate_pool_full";
       } else if (item.eligibleForFeed && !item.skipReason) {
-        item.skipReason = item.isFresh
-          ? "topic_bucket_full"
-          : "stale_fallback_not_needed";
+        item.skipReason = isBalancedAllRequest
+          ? "feed_selector_rejected"
+          : item.isFresh
+            ? "topic_bucket_full"
+            : "stale_fallback_not_needed";
       }
     }
 
-    const articles = selectedArticles.map((article) => ({
-      ...article,
-      variants: buildVariants(article),
-      variantMethods: buildRuleVariantMethods()
-    }));
+    const articles = selectedArticles.map((article) => {
+      const {
+        feedSelectorReason: _feedSelectorReason,
+        isFresh: _isFresh,
+        providerRank: _providerRank,
+        ...publicArticle
+      } = article;
+      return {
+        ...publicArticle,
+        variants: buildVariants(publicArticle),
+        variantMethods: buildRuleVariantMethods()
+      };
+    });
 
     articles.forEach((article) => {
       articleCache.set(article.id, article);
@@ -5027,7 +5088,8 @@ app.get("/feed", async (req, res) => {
           skippedNone,
           skippedOutOfTarget,
           freshSelectedCount,
-          staleFallbackSelectedCount
+          staleFallbackSelectedCount,
+          feedSelectorStats
         },
         items: topicAuditItems
       });
@@ -5155,7 +5217,8 @@ app.get("/feed", async (req, res) => {
               skippedNone,
               skippedOutOfTarget,
               freshSelectedCount,
-              staleFallbackCount: staleFallbackSelectedCount
+              staleFallbackCount: staleFallbackSelectedCount,
+              feedSelectorStats
             }
           : undefined,
         sourceUri: sourceUriUsed || null,
@@ -5189,7 +5252,8 @@ app.get("/feed", async (req, res) => {
         skippedNone,
         skippedOutOfTarget,
         freshSelectedCount,
-        staleFallbackSelectedCount
+        staleFallbackSelectedCount,
+        feedSelectorStats
       },
       items: topicAuditItems
     });
@@ -5249,7 +5313,8 @@ app.get("/feed", async (req, res) => {
               classifiedAccepted,
               skippedLength,
               skippedNone,
-              skippedOutOfTarget
+              skippedOutOfTarget,
+              feedSelectorStats
             }
           : undefined,
         cacheTtlMs: FEED_CACHE_TTL_MS
@@ -5281,7 +5346,8 @@ app.get("/feed", async (req, res) => {
             classifiedAccepted,
             skippedLength,
             skippedNone,
-            skippedOutOfTarget
+            skippedOutOfTarget,
+            feedSelectorStats
           }
         : undefined,
       sourceUri: sourceUriUsed || null,

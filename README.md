@@ -39,14 +39,19 @@ Mobile news experiment app with:
 - If the LLM batch fails, the backend falls back to keyword classification.
 
 ### 4. Feed Selection
-- Orchestration: `backend/events-server.js`
+- Orchestration:
+  - `backend/events-server.js`
+  - `backend/feed-selector.js`
 - The backend:
   - classifies the AP candidate pool
   - buckets articles by topic
-  - selects `FEED_PER_TOPIC_TARGET` articles per topic
+  - runs a second-stage feed selector inside each topic bucket
+  - selects up to `FEED_PER_TOPIC_TARGET` articles per topic
+- The selector prefers public-interest hard news with stronger rewriting potential and rejects sports, entertainment, lifestyle, soft social-news filler, and title/lead mismatches.
+- Selector candidate pool size is controlled by `FEED_SELECTOR_CANDIDATES_PER_TOPIC`.
 - Freshness policy:
-  - fresh-first with stale fallback
-  - controlled by `FEED_FRESH_ARTICLE_MAX_AGE_HOURS`
+  - candidates are marked fresh or stale using `FEED_FRESH_ARTICLE_MAX_AGE_HOURS`
+  - the selector can choose an older hard-news article over a fresh low-value article
 
 ### 5. Snapshot Storage
 - The backend writes the selected feed into Postgres tables:
