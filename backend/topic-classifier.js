@@ -631,7 +631,6 @@ async function classifyWithLlm(article) {
       },
       body: JSON.stringify({
         model: TOPIC_CLASSIFIER_MODEL,
-        temperature: 0,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -695,7 +694,6 @@ async function classifyWithLlmBatch(articles) {
       },
       body: JSON.stringify({
         model: TOPIC_CLASSIFIER_MODEL,
-        temperature: 0,
         response_format: { type: "json_object" },
         messages: [
           {

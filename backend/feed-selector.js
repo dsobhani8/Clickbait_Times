@@ -260,7 +260,6 @@ async function selectFeedArticlesForTopic({
       },
       body: JSON.stringify({
         model: FEED_SELECTOR_MODEL,
-        temperature: 0,
         response_format: { type: "json_object" },
         messages: [
           {
