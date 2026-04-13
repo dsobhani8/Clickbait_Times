@@ -1,4 +1,4 @@
-const TOPIC_CLASSIFIER_METHOD = "keyword_v1";
+const TOPIC_CLASSIFIER_METHOD = "keyword_v2";
 const TOPIC_CLASSIFIER_ENABLED =
   String(process.env.TOPIC_CLASSIFIER_ENABLED || "true").toLowerCase() !==
   "false";
@@ -22,10 +22,18 @@ const SECTION_WEIGHTS = Object.freeze({
 const KEYWORDS_BY_TOPIC = Object.freeze({
   Technology: Object.freeze([
     "ai",
+    "a.i.",
     "artificial intelligence",
+    "machine learning",
     "software",
-    "app",
-    "platform",
+    "technology",
+    "tech",
+    "internet",
+    "online",
+    "digital",
+    "digital platform",
+    "social media",
+    "app store",
     "chip",
     "chips",
     "semiconductor",
@@ -37,13 +45,26 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
     "hacked",
     "cloud",
     "data center",
+    "data centers",
     "smartphone",
+    "smartphones",
     "device",
     "devices",
     "startup",
+    "startups",
     "tech company",
     "tech giant",
     "algorithm",
+    "robot",
+    "robots",
+    "robotics",
+    "automation",
+    "electric vehicle",
+    "ev",
+    "crypto",
+    "cryptocurrency",
+    "bitcoin",
+    "privacy",
     "openai",
     "microsoft",
     "google",
@@ -59,7 +80,7 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
     "campaigns",
     "congress",
     "senate",
-    "house",
+    "house of representatives",
     "lawmakers",
     "president",
     "prime minister",
@@ -67,8 +88,11 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
     "governments",
     "white house",
     "parliament",
-    "court",
     "supreme court",
+    "federal court",
+    "appeals court",
+    "judge",
+    "judges",
     "legislation",
     "bill",
     "policy",
@@ -87,7 +111,6 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
   Economy: Object.freeze([
     "inflation",
     "prices",
-    "price",
     "jobs",
     "job market",
     "unemployment",
@@ -103,28 +126,58 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
     "revenue",
     "profit",
     "profits",
-    "loss",
-    "losses",
     "trade",
     "tariff",
     "tariffs",
     "economy",
     "economic",
+    "economic growth",
     "recession",
-    "growth",
     "consumer spending",
     "layoffs",
-    "demand"
+    "demand",
+    "business conditions",
+    "small business",
+    "sba loan",
+    "loans",
+    "mortgage",
+    "housing market",
+    "manufacturing",
+    "factory activity"
   ])
 });
 
 const NONE_KEYWORDS = Object.freeze([
+  "sports",
   "football",
   "basketball",
   "baseball",
+  "mlb",
+  "nba",
+  "nfl",
+  "nhl",
+  "wnba",
   "soccer",
+  "tennis",
+  "golf",
+  "hockey",
   "tournament",
   "coach",
+  "player",
+  "players",
+  "team",
+  "teams",
+  "game",
+  "match",
+  "season",
+  "umpire",
+  "ejection",
+  "pitch",
+  "pitcher",
+  "automated ball-strike",
+  "ball-strike",
+  "abs review",
+  "abs reviews",
   "movie",
   "movies",
   "music",
@@ -143,7 +196,10 @@ const NONE_KEYWORDS = Object.freeze([
   "hospital",
   "disease",
   "virus",
-  "health"
+  "health",
+  "wildfire",
+  "accident",
+  "crash"
 ]);
 
 function coerceToString(value) {
@@ -241,7 +297,10 @@ function buildSections(article) {
   const title = typeof article?.title === "string" ? article.title : "";
   const lead = typeof article?.lead === "string" ? article.lead : "";
   const body = Array.isArray(article?.body)
-    ? article.body.filter((entry) => typeof entry === "string").join("\n")
+    ? article.body
+        .filter((entry) => typeof entry === "string")
+        .slice(0, 4)
+        .join("\n")
     : "";
 
   return { title, lead, body };
