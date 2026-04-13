@@ -31,6 +31,7 @@ const {
 const { normalizeProlificPid } = require("./participant-identity");
 const {
   TOPIC_CLASSIFIER_METHOD,
+  TOPIC_CLASSIFIER_MODEL,
   TOPIC_CLASSIFIER_ENABLED,
   TOPIC_DEFAULT_FILTERS_CSV,
   TOPIC_NONE,
@@ -3158,6 +3159,7 @@ app.get("/health", async (_req, res) => {
     feedPerTopicTarget: FEED_PER_TOPIC_TARGET,
     topicClassifierEnabled: TOPIC_CLASSIFIER_ENABLED,
     topicClassifierMethod: TOPIC_CLASSIFIER_METHOD,
+    topicClassifierModel: TOPIC_CLASSIFIER_MODEL,
     feedTopicTargets: FEED_TOPIC_TARGETS,
     feedFetchMaxPages: FEED_FETCH_MAX_PAGES
   });

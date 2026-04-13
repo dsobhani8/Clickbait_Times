@@ -23,7 +23,7 @@ Mobile news experiment app with:
 
 ### 3. Topic Classification
 - Classifier code: `backend/topic-classifier.js`
-- Active method: keyword-based bucketing
+- Active method: keyword gate + LLM classifier
   - constant: `TOPIC_CLASSIFIER_METHOD`
 - Allowed labels:
   - `Technology`
@@ -34,8 +34,9 @@ Mobile news experiment app with:
   - title
   - lead
   - first few body paragraphs
-- The article is assigned to the topic bucket with the highest weighted keyword score.
-- If no topic clearly wins, the article is assigned to `None`.
+- A weighted keyword pass first removes obvious out-of-scope articles.
+- Articles that pass the keyword gate are then classified by the LLM.
+- If the LLM fails, the backend falls back to the keyword classification.
 
 ### 4. Feed Selection
 - Orchestration: `backend/events-server.js`
@@ -77,19 +78,13 @@ Original article
                  └─ clickbait body rewrite
 ```
 
-### 7. App Delivery
-- Feed client: `services/articles.ts`
-- Feed screen: `app/index.tsx`
-- Article screen: `app/article/[id].tsx`
-- The app fetches the canonical `All` snapshot from `/feed`.
-- Topic tabs are filtered locally from that same `All` snapshot so they match what appears in `All`.
-
 ## Prompt Locations
 
 ### Topic Classification
 - `backend/topic-classifier.js`
-  - keyword-based classifier
-  - no runtime prompt file
+  - keyword gate
+  - inline LLM classifier prompt
+  - no separate runtime prompt file
 
 ### Rewrite Prompts
 - Prompt wiring:
