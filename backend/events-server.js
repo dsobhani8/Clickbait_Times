@@ -262,6 +262,54 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_rewrite_jobs_status_snapshot
     ON rewrite_jobs(status, snapshot_id);
+  CREATE TABLE IF NOT EXISTS topic_classification_audit_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    snapshot_date TEXT,
+    category TEXT,
+    limit_count INTEGER,
+    provider TEXT NOT NULL,
+    source_uri TEXT,
+    classifier_method TEXT,
+    classifier_model TEXT,
+    classifier_batch_size INTEGER,
+    feed_per_topic_target INTEGER,
+    fresh_article_max_age_hours INTEGER,
+    pages_fetched INTEGER,
+    fetched_count INTEGER,
+    audited_count INTEGER,
+    eligible_count INTEGER,
+    selected_count INTEGER,
+    snapshot_id INTEGER,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    metadata_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_topic_audit_runs_created
+    ON topic_classification_audit_runs(created_at DESC, id DESC);
+  CREATE TABLE IF NOT EXISTS topic_classification_audit_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    provider_rank INTEGER NOT NULL,
+    article_id TEXT,
+    title TEXT NOT NULL,
+    lead TEXT,
+    published_at TEXT,
+    word_count INTEGER,
+    length_ok INTEGER NOT NULL,
+    is_fresh INTEGER NOT NULL,
+    classified_topic TEXT,
+    topic_tag TEXT,
+    eligible_for_feed INTEGER NOT NULL,
+    selected_for_snapshot INTEGER NOT NULL,
+    skip_reason TEXT,
+    classifier_status TEXT,
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT,
+    FOREIGN KEY(run_id) REFERENCES topic_classification_audit_runs(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_topic_audit_items_run_rank
+    ON topic_classification_audit_items(run_id, provider_rank);
   CREATE TABLE IF NOT EXISTS participant_accounts (
     prolific_pid TEXT PRIMARY KEY,
     auth_user_id TEXT NOT NULL UNIQUE,
@@ -514,6 +562,53 @@ async function ensurePostgresSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_rewrite_jobs_status_snapshot
       ON rewrite_jobs(status, snapshot_id);
+    CREATE TABLE IF NOT EXISTS topic_classification_audit_runs (
+      id BIGSERIAL PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      snapshot_date TEXT,
+      category TEXT,
+      limit_count INTEGER,
+      provider TEXT NOT NULL,
+      source_uri TEXT,
+      classifier_method TEXT,
+      classifier_model TEXT,
+      classifier_batch_size INTEGER,
+      feed_per_topic_target INTEGER,
+      fresh_article_max_age_hours INTEGER,
+      pages_fetched INTEGER,
+      fetched_count INTEGER,
+      audited_count INTEGER,
+      eligible_count INTEGER,
+      selected_count INTEGER,
+      snapshot_id BIGINT,
+      status TEXT NOT NULL,
+      error_message TEXT,
+      metadata_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_topic_audit_runs_created
+      ON topic_classification_audit_runs(created_at DESC, id DESC);
+    CREATE TABLE IF NOT EXISTS topic_classification_audit_items (
+      id BIGSERIAL PRIMARY KEY,
+      run_id BIGINT NOT NULL REFERENCES topic_classification_audit_runs(id),
+      provider_rank INTEGER NOT NULL,
+      article_id TEXT,
+      title TEXT NOT NULL,
+      lead TEXT,
+      published_at TEXT,
+      word_count INTEGER,
+      length_ok BOOLEAN NOT NULL,
+      is_fresh BOOLEAN NOT NULL,
+      classified_topic TEXT,
+      topic_tag TEXT,
+      eligible_for_feed BOOLEAN NOT NULL,
+      selected_for_snapshot BOOLEAN NOT NULL,
+      skip_reason TEXT,
+      classifier_status TEXT,
+      fallback_used BOOLEAN NOT NULL DEFAULT false,
+      metadata_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_topic_audit_items_run_rank
+      ON topic_classification_audit_items(run_id, provider_rank);
     CREATE TABLE IF NOT EXISTS participant_accounts (
       prolific_pid TEXT PRIMARY KEY,
       auth_user_id TEXT NOT NULL UNIQUE,
@@ -978,6 +1073,173 @@ const listVariantsForSnapshotArticleStmt = db.prepare(`
     AND article_id = @articleId
 `);
 
+const insertTopicAuditRunStmt = db.prepare(`
+  INSERT INTO topic_classification_audit_runs (
+    created_at,
+    snapshot_date,
+    category,
+    limit_count,
+    provider,
+    source_uri,
+    classifier_method,
+    classifier_model,
+    classifier_batch_size,
+    feed_per_topic_target,
+    fresh_article_max_age_hours,
+    pages_fetched,
+    fetched_count,
+    audited_count,
+    eligible_count,
+    selected_count,
+    snapshot_id,
+    status,
+    error_message,
+    metadata_json
+  ) VALUES (
+    @createdAt,
+    @snapshotDate,
+    @category,
+    @limitCount,
+    @provider,
+    @sourceUri,
+    @classifierMethod,
+    @classifierModel,
+    @classifierBatchSize,
+    @feedPerTopicTarget,
+    @freshArticleMaxAgeHours,
+    @pagesFetched,
+    @fetchedCount,
+    @auditedCount,
+    @eligibleCount,
+    @selectedCount,
+    @snapshotId,
+    @status,
+    @errorMessage,
+    @metadataJson
+  )
+`);
+
+const insertTopicAuditItemStmt = db.prepare(`
+  INSERT INTO topic_classification_audit_items (
+    run_id,
+    provider_rank,
+    article_id,
+    title,
+    lead,
+    published_at,
+    word_count,
+    length_ok,
+    is_fresh,
+    classified_topic,
+    topic_tag,
+    eligible_for_feed,
+    selected_for_snapshot,
+    skip_reason,
+    classifier_status,
+    fallback_used,
+    metadata_json
+  ) VALUES (
+    @runId,
+    @providerRank,
+    @articleId,
+    @title,
+    @lead,
+    @publishedAt,
+    @wordCount,
+    @lengthOk,
+    @isFresh,
+    @classifiedTopic,
+    @topicTag,
+    @eligibleForFeed,
+    @selectedForSnapshot,
+    @skipReason,
+    @classifierStatus,
+    @fallbackUsed,
+    @metadataJson
+  )
+`);
+
+const listTopicAuditRunsStmt = db.prepare(`
+  SELECT
+    id,
+    created_at,
+    snapshot_date,
+    category,
+    limit_count,
+    provider,
+    source_uri,
+    classifier_method,
+    classifier_model,
+    classifier_batch_size,
+    feed_per_topic_target,
+    fresh_article_max_age_hours,
+    pages_fetched,
+    fetched_count,
+    audited_count,
+    eligible_count,
+    selected_count,
+    snapshot_id,
+    status,
+    error_message,
+    metadata_json
+  FROM topic_classification_audit_runs
+  ORDER BY created_at DESC, id DESC
+  LIMIT @limit
+`);
+
+const findTopicAuditRunByIdStmt = db.prepare(`
+  SELECT
+    id,
+    created_at,
+    snapshot_date,
+    category,
+    limit_count,
+    provider,
+    source_uri,
+    classifier_method,
+    classifier_model,
+    classifier_batch_size,
+    feed_per_topic_target,
+    fresh_article_max_age_hours,
+    pages_fetched,
+    fetched_count,
+    audited_count,
+    eligible_count,
+    selected_count,
+    snapshot_id,
+    status,
+    error_message,
+    metadata_json
+  FROM topic_classification_audit_runs
+  WHERE id = @runId
+  LIMIT 1
+`);
+
+const listTopicAuditItemsStmt = db.prepare(`
+  SELECT
+    id,
+    run_id,
+    provider_rank,
+    article_id,
+    title,
+    lead,
+    published_at,
+    word_count,
+    length_ok,
+    is_fresh,
+    classified_topic,
+    topic_tag,
+    eligible_for_feed,
+    selected_for_snapshot,
+    skip_reason,
+    classifier_status,
+    fallback_used,
+    metadata_json
+  FROM topic_classification_audit_items
+  WHERE run_id = @runId
+  ORDER BY provider_rank ASC, id ASC
+`);
+
 const listEventsBase = `
   SELECT
     event_id,
@@ -1113,6 +1375,15 @@ function countWordsInText(value) {
   return Array.isArray(matches) ? matches.length : 0;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function countArticleWords(article) {
   if (!article) {
     return 0;
@@ -1167,6 +1438,86 @@ function isFreshEnoughArticle(article, nowMs = Date.now()) {
 
   const ageMs = Math.max(0, nowMs - publishedMs);
   return ageMs <= FEED_FRESH_ARTICLE_MAX_AGE_MS;
+}
+
+function articleAuditKey(article) {
+  if (typeof article?.id === "string" && article.id.length > 0) {
+    return article.id;
+  }
+  return `${article?.title || ""}::${article?.publishedAt || ""}`;
+}
+
+function parseJsonRecord(value) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function toBoolean(value) {
+  return value === true || value === 1 || value === "1";
+}
+
+function rowToTopicAuditRun(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    createdAt: row.created_at,
+    snapshotDate: row.snapshot_date,
+    category: row.category,
+    limitCount: Number(row.limit_count || 0),
+    provider: row.provider,
+    sourceUri: row.source_uri,
+    classifierMethod: row.classifier_method,
+    classifierModel: row.classifier_model,
+    classifierBatchSize: Number(row.classifier_batch_size || 0),
+    feedPerTopicTarget: Number(row.feed_per_topic_target || 0),
+    freshArticleMaxAgeHours: Number(row.fresh_article_max_age_hours || 0),
+    pagesFetched: Number(row.pages_fetched || 0),
+    fetchedCount: Number(row.fetched_count || 0),
+    auditedCount: Number(row.audited_count || 0),
+    eligibleCount: Number(row.eligible_count || 0),
+    selectedCount: Number(row.selected_count || 0),
+    snapshotId:
+      Number.isFinite(Number(row.snapshot_id)) && Number(row.snapshot_id) > 0
+        ? Number(row.snapshot_id)
+        : null,
+    status: row.status,
+    errorMessage: row.error_message,
+    metadata: parseJsonRecord(row.metadata_json)
+  };
+}
+
+function rowToTopicAuditItem(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    runId: Number(row.run_id),
+    position: Number(row.provider_rank || 0),
+    providerRank: Number(row.provider_rank || 0),
+    articleId: row.article_id,
+    title: row.title,
+    lead: row.lead,
+    publishedAt: row.published_at,
+    wordCount: Number(row.word_count || 0),
+    lengthOk: toBoolean(row.length_ok),
+    isFresh: toBoolean(row.is_fresh),
+    classification: {
+      topic: row.classified_topic || TOPIC_NONE,
+      tag: row.topic_tag || null
+    },
+    eligibleForFeed: toBoolean(row.eligible_for_feed),
+    selectedForSnapshot: toBoolean(row.selected_for_snapshot),
+    skipReason: row.skip_reason || "",
+    classifierStatus: row.classifier_status || "",
+    fallbackUsed: toBoolean(row.fallback_used),
+    metadata: parseJsonRecord(row.metadata_json)
+  };
 }
 
 function rowToArticle(row) {
@@ -2908,6 +3259,368 @@ async function saveDailySnapshot({
   }
 }
 
+const saveTopicClassificationAuditRunSqlite = db.transaction((input) => {
+  const nowIso = new Date().toISOString();
+  const items = Array.isArray(input.items) ? input.items : [];
+  const result = insertTopicAuditRunStmt.run({
+    createdAt: input.createdAt || nowIso,
+    snapshotDate: input.snapshotDate ?? null,
+    category: input.category ?? null,
+    limitCount: Number.isFinite(Number(input.limitCount))
+      ? Math.round(Number(input.limitCount))
+      : null,
+    provider: input.provider || "newsapi_ai",
+    sourceUri: input.sourceUri ?? null,
+    classifierMethod: input.classifierMethod ?? TOPIC_CLASSIFIER_METHOD,
+    classifierModel: input.classifierModel ?? TOPIC_CLASSIFIER_MODEL,
+    classifierBatchSize: Number.isFinite(Number(input.classifierBatchSize))
+      ? Math.round(Number(input.classifierBatchSize))
+      : TOPIC_CLASSIFIER_BATCH_SIZE,
+    feedPerTopicTarget: Number.isFinite(Number(input.feedPerTopicTarget))
+      ? Math.round(Number(input.feedPerTopicTarget))
+      : FEED_PER_TOPIC_TARGET,
+    freshArticleMaxAgeHours: Number.isFinite(Number(input.freshArticleMaxAgeHours))
+      ? Math.round(Number(input.freshArticleMaxAgeHours))
+      : FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+    pagesFetched: Number.isFinite(Number(input.pagesFetched))
+      ? Math.round(Number(input.pagesFetched))
+      : 0,
+    fetchedCount: Number.isFinite(Number(input.fetchedCount))
+      ? Math.round(Number(input.fetchedCount))
+      : items.length,
+    auditedCount: Number.isFinite(Number(input.auditedCount))
+      ? Math.round(Number(input.auditedCount))
+      : items.length,
+    eligibleCount: Number.isFinite(Number(input.eligibleCount))
+      ? Math.round(Number(input.eligibleCount))
+      : items.filter((item) => item.eligibleForFeed).length,
+    selectedCount: Number.isFinite(Number(input.selectedCount))
+      ? Math.round(Number(input.selectedCount))
+      : items.filter((item) => item.selectedForSnapshot).length,
+    snapshotId:
+      Number.isFinite(Number(input.snapshotId)) && Number(input.snapshotId) > 0
+        ? Math.round(Number(input.snapshotId))
+        : null,
+    status: input.status || "completed",
+    errorMessage: input.errorMessage ?? null,
+    metadataJson: JSON.stringify(input.metadata || {})
+  });
+  const runId = Number(result.lastInsertRowid);
+
+  for (const item of items) {
+    insertTopicAuditItemStmt.run({
+      runId,
+      providerRank: Number.isFinite(Number(item.providerRank))
+        ? Math.round(Number(item.providerRank))
+        : 0,
+      articleId: item.articleId ?? null,
+      title: item.title || "",
+      lead: item.lead ?? null,
+      publishedAt: item.publishedAt ?? null,
+      wordCount: Number.isFinite(Number(item.wordCount))
+        ? Math.round(Number(item.wordCount))
+        : 0,
+      lengthOk: item.lengthOk ? 1 : 0,
+      isFresh: item.isFresh ? 1 : 0,
+      classifiedTopic: item.classifiedTopic ?? null,
+      topicTag: item.topicTag ?? null,
+      eligibleForFeed: item.eligibleForFeed ? 1 : 0,
+      selectedForSnapshot: item.selectedForSnapshot ? 1 : 0,
+      skipReason: item.skipReason ?? null,
+      classifierStatus: item.classifierStatus ?? null,
+      fallbackUsed: item.fallbackUsed ? 1 : 0,
+      metadataJson: JSON.stringify(item.metadata || {})
+    });
+  }
+
+  return { auditRunId: runId };
+});
+
+async function saveTopicClassificationAuditRun(input) {
+  const items = Array.isArray(input.items) ? input.items : [];
+  if (!POSTGRES_ENABLED) {
+    return saveTopicClassificationAuditRunSqlite({
+      ...input,
+      items
+    });
+  }
+
+  const client = await pgPool.connect();
+  try {
+    await client.query("BEGIN");
+    const nowIso = new Date().toISOString();
+    const runResult = await client.query(
+      `
+        INSERT INTO topic_classification_audit_runs (
+          created_at,
+          snapshot_date,
+          category,
+          limit_count,
+          provider,
+          source_uri,
+          classifier_method,
+          classifier_model,
+          classifier_batch_size,
+          feed_per_topic_target,
+          fresh_article_max_age_hours,
+          pages_fetched,
+          fetched_count,
+          audited_count,
+          eligible_count,
+          selected_count,
+          snapshot_id,
+          status,
+          error_message,
+          metadata_json
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+        )
+        RETURNING id
+      `,
+      [
+        input.createdAt || nowIso,
+        input.snapshotDate ?? null,
+        input.category ?? null,
+        Number.isFinite(Number(input.limitCount))
+          ? Math.round(Number(input.limitCount))
+          : null,
+        input.provider || "newsapi_ai",
+        input.sourceUri ?? null,
+        input.classifierMethod ?? TOPIC_CLASSIFIER_METHOD,
+        input.classifierModel ?? TOPIC_CLASSIFIER_MODEL,
+        Number.isFinite(Number(input.classifierBatchSize))
+          ? Math.round(Number(input.classifierBatchSize))
+          : TOPIC_CLASSIFIER_BATCH_SIZE,
+        Number.isFinite(Number(input.feedPerTopicTarget))
+          ? Math.round(Number(input.feedPerTopicTarget))
+          : FEED_PER_TOPIC_TARGET,
+        Number.isFinite(Number(input.freshArticleMaxAgeHours))
+          ? Math.round(Number(input.freshArticleMaxAgeHours))
+          : FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+        Number.isFinite(Number(input.pagesFetched))
+          ? Math.round(Number(input.pagesFetched))
+          : 0,
+        Number.isFinite(Number(input.fetchedCount))
+          ? Math.round(Number(input.fetchedCount))
+          : items.length,
+        Number.isFinite(Number(input.auditedCount))
+          ? Math.round(Number(input.auditedCount))
+          : items.length,
+        Number.isFinite(Number(input.eligibleCount))
+          ? Math.round(Number(input.eligibleCount))
+          : items.filter((item) => item.eligibleForFeed).length,
+        Number.isFinite(Number(input.selectedCount))
+          ? Math.round(Number(input.selectedCount))
+          : items.filter((item) => item.selectedForSnapshot).length,
+        Number.isFinite(Number(input.snapshotId)) && Number(input.snapshotId) > 0
+          ? Math.round(Number(input.snapshotId))
+          : null,
+        input.status || "completed",
+        input.errorMessage ?? null,
+        JSON.stringify(input.metadata || {})
+      ]
+    );
+    const runId = Number(runResult.rows?.[0]?.id);
+
+    for (const item of items) {
+      await client.query(
+        `
+          INSERT INTO topic_classification_audit_items (
+            run_id,
+            provider_rank,
+            article_id,
+            title,
+            lead,
+            published_at,
+            word_count,
+            length_ok,
+            is_fresh,
+            classified_topic,
+            topic_tag,
+            eligible_for_feed,
+            selected_for_snapshot,
+            skip_reason,
+            classifier_status,
+            fallback_used,
+            metadata_json
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        `,
+        [
+          runId,
+          Number.isFinite(Number(item.providerRank))
+            ? Math.round(Number(item.providerRank))
+            : 0,
+          item.articleId ?? null,
+          item.title || "",
+          item.lead ?? null,
+          item.publishedAt ?? null,
+          Number.isFinite(Number(item.wordCount))
+            ? Math.round(Number(item.wordCount))
+            : 0,
+          Boolean(item.lengthOk),
+          Boolean(item.isFresh),
+          item.classifiedTopic ?? null,
+          item.topicTag ?? null,
+          Boolean(item.eligibleForFeed),
+          Boolean(item.selectedForSnapshot),
+          item.skipReason ?? null,
+          item.classifierStatus ?? null,
+          Boolean(item.fallbackUsed),
+          JSON.stringify(item.metadata || {})
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    return { auditRunId: runId };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function saveTopicClassificationAuditRunBestEffort(input) {
+  try {
+    return await saveTopicClassificationAuditRun(input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[topic-audit] failed to save audit run: ${message}`);
+    return { auditRunId: null, error: message };
+  }
+}
+
+async function listTopicAuditRuns(limit = 20) {
+  const safeLimit = Number.isFinite(Number(limit))
+    ? Math.max(1, Math.min(100, Math.round(Number(limit))))
+    : 20;
+  if (!POSTGRES_ENABLED) {
+    return listTopicAuditRunsStmt
+      .all({ limit: safeLimit })
+      .map(rowToTopicAuditRun)
+      .filter(Boolean);
+  }
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        created_at,
+        snapshot_date,
+        category,
+        limit_count,
+        provider,
+        source_uri,
+        classifier_method,
+        classifier_model,
+        classifier_batch_size,
+        feed_per_topic_target,
+        fresh_article_max_age_hours,
+        pages_fetched,
+        fetched_count,
+        audited_count,
+        eligible_count,
+        selected_count,
+        snapshot_id,
+        status,
+        error_message,
+        metadata_json
+      FROM topic_classification_audit_runs
+      ORDER BY created_at DESC, id DESC
+      LIMIT $1
+    `,
+    [safeLimit]
+  );
+  return result.rows.map(rowToTopicAuditRun).filter(Boolean);
+}
+
+async function getTopicAuditRunById(runId) {
+  const id = Number(runId);
+  if (!Number.isFinite(id) || id <= 0) {
+    return null;
+  }
+  if (!POSTGRES_ENABLED) {
+    return rowToTopicAuditRun(findTopicAuditRunByIdStmt.get({ runId: Math.round(id) }));
+  }
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        created_at,
+        snapshot_date,
+        category,
+        limit_count,
+        provider,
+        source_uri,
+        classifier_method,
+        classifier_model,
+        classifier_batch_size,
+        feed_per_topic_target,
+        fresh_article_max_age_hours,
+        pages_fetched,
+        fetched_count,
+        audited_count,
+        eligible_count,
+        selected_count,
+        snapshot_id,
+        status,
+        error_message,
+        metadata_json
+      FROM topic_classification_audit_runs
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [Math.round(id)]
+  );
+  return rowToTopicAuditRun(result.rows?.[0]);
+}
+
+async function getLatestTopicAuditRun() {
+  const runs = await listTopicAuditRuns(1);
+  return Array.isArray(runs) && runs.length > 0 ? runs[0] : null;
+}
+
+async function listTopicAuditItems(runId) {
+  const id = Number(runId);
+  if (!Number.isFinite(id) || id <= 0) {
+    return [];
+  }
+  if (!POSTGRES_ENABLED) {
+    return listTopicAuditItemsStmt
+      .all({ runId: Math.round(id) })
+      .map(rowToTopicAuditItem)
+      .filter(Boolean);
+  }
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        run_id,
+        provider_rank,
+        article_id,
+        title,
+        lead,
+        published_at,
+        word_count,
+        length_ok,
+        is_fresh,
+        classified_topic,
+        topic_tag,
+        eligible_for_feed,
+        selected_for_snapshot,
+        skip_reason,
+        classifier_status,
+        fallback_used,
+        metadata_json
+      FROM topic_classification_audit_items
+      WHERE run_id = $1
+      ORDER BY provider_rank ASC, id ASC
+    `,
+    [Math.round(id)]
+  );
+  return result.rows.map(rowToTopicAuditItem).filter(Boolean);
+}
+
 async function runDailyRefreshTick() {
   if (!DAILY_REFRESH_ENABLED) {
     return;
@@ -3417,6 +4130,332 @@ app.get("/admin/pipeline/status", async (req, res) => {
   });
 });
 
+app.get("/admin/topic-audit", (_req, res) => {
+  const title = "Topic Classification Audit";
+  return res.type("html").send(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: light; --border: #d7d7d7; --muted: #666; --bg: #f6f3ee; --card: #fffdf8; --ink: #1d1a16; }
+    body { margin: 0; padding: 24px; background: var(--bg); color: var(--ink); font-family: Georgia, "Times New Roman", serif; }
+    main { max-width: 1280px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 32px; }
+    p { color: var(--muted); }
+    form { display: grid; grid-template-columns: minmax(280px, 1fr) 110px 90px auto; gap: 10px; align-items: end; margin: 20px 0; padding: 16px; background: var(--card); border: 1px solid var(--border); }
+    label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+    input, button { font: inherit; padding: 9px 10px; border: 1px solid var(--border); background: white; }
+    button { cursor: pointer; background: #1d1a16; color: white; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); }
+    th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; font-size: 14px; }
+    th { position: sticky; top: 0; background: #ece6db; z-index: 1; }
+    .muted { color: var(--muted); }
+    .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #ece6db; font-size: 12px; }
+    .bad { background: #f6d7d7; }
+    .good { background: #dcebd8; }
+    .warn { background: #f3e2b8; }
+    .headline { min-width: 280px; }
+    .lead { min-width: 320px; }
+    #error { color: #9d1d1d; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p>Shows the saved topic classification audit from the latest feed rebuild. It does not rebuild or reclassify anything.</p>
+    <form id="controls">
+      <label>Admin token <input id="token" name="token" type="password" autocomplete="off" placeholder="PIPELINE_ADMIN_TOKEN" /></label>
+      <label>Run ID <input id="runId" name="runId" type="number" min="1" placeholder="latest" /></label>
+      <button type="submit">Load audit</button>
+    </form>
+    <p id="summary" class="muted"></p>
+    <p id="error"></p>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Topic</th>
+          <th>Status</th>
+          <th>Published</th>
+          <th>Words</th>
+          <th>Fresh</th>
+          <th class="headline">Headline</th>
+          <th class="lead">Lead</th>
+          <th>Tag</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    const form = document.getElementById("controls");
+    const rows = document.getElementById("rows");
+    const summary = document.getElementById("summary");
+    const error = document.getElementById("error");
+    const tokenInput = document.getElementById("token");
+    const savedToken = window.sessionStorage.getItem("topicAuditAdminToken") || "";
+    tokenInput.value = savedToken;
+
+    function text(value) {
+      return value == null ? "" : String(value);
+    }
+
+    function cell(value) {
+      const td = document.createElement("td");
+      td.textContent = text(value);
+      return td;
+    }
+
+    function pill(value, className) {
+      const span = document.createElement("span");
+      span.className = "pill " + (className || "");
+      span.textContent = text(value);
+      return span;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      rows.replaceChildren();
+      summary.textContent = "Loading audit...";
+      error.textContent = "";
+
+      const token = tokenInput.value.trim();
+      window.sessionStorage.setItem("topicAuditAdminToken", token);
+      const runId = document.getElementById("runId").value.trim();
+      const url = runId
+        ? "/admin/topic-audit/runs/" + encodeURIComponent(runId)
+        : "/admin/topic-audit/runs/latest";
+
+      try {
+        const response = await fetch(url, {
+          headers: { "x-admin-token": token }
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || "Audit request failed");
+        }
+        if (!payload.run) {
+          summary.textContent = "No saved topic audit runs yet. Trigger a feed rebuild first.";
+          return;
+        }
+
+        summary.textContent = [
+          "Run " + payload.run.id,
+          "created " + payload.run.createdAt,
+          "fetched " + payload.run.fetchedCount,
+          "audited " + payload.run.auditedCount,
+          "eligible " + payload.run.eligibleCount,
+          "selected " + payload.run.selectedCount,
+          "method " + payload.run.classifierMethod,
+          "model " + payload.run.classifierModel
+        ].join(" | ");
+
+        for (const item of payload.articles) {
+          const tr = document.createElement("tr");
+          const status = item.selectedForSnapshot ? "selected" : item.skipReason;
+          tr.appendChild(cell(item.position));
+          const topicTd = document.createElement("td");
+          topicTd.appendChild(pill(item.classification?.topic || "unclassified", item.classification?.topic === "None" ? "bad" : "good"));
+          tr.appendChild(topicTd);
+          const statusTd = document.createElement("td");
+          statusTd.appendChild(pill(status, item.selectedForSnapshot ? "good" : "warn"));
+          tr.appendChild(statusTd);
+          tr.appendChild(cell(item.publishedAt || ""));
+          tr.appendChild(cell(item.wordCount));
+          tr.appendChild(cell(item.isFresh ? "yes" : "no"));
+          tr.appendChild(cell(item.title));
+          tr.appendChild(cell(item.lead));
+          tr.appendChild(cell(item.classification?.tag || ""));
+          rows.appendChild(tr);
+        }
+      } catch (err) {
+        summary.textContent = "";
+        error.textContent = err instanceof Error ? err.message : String(err);
+      }
+    });
+  </script>
+</body>
+</html>`);
+});
+
+app.get("/admin/topic-audit/runs", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+  const limitRaw = Number(req.query.limit ?? 20);
+  const runs = await listTopicAuditRuns(limitRaw);
+  return res.json({
+    ok: true,
+    runs
+  });
+});
+
+app.get("/admin/topic-audit/runs/latest", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+  const run = await getLatestTopicAuditRun();
+  const articles = run ? await listTopicAuditItems(run.id) : [];
+  return res.json({
+    ok: true,
+    run,
+    articles
+  });
+});
+
+app.get("/admin/topic-audit/runs/:runId", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+  const run = await getTopicAuditRunById(req.params.runId);
+  if (!run) {
+    return res.status(404).json({
+      ok: false,
+      error: "Topic audit run not found."
+    });
+  }
+  const articles = await listTopicAuditItems(run.id);
+  return res.json({
+    ok: true,
+    run,
+    articles
+  });
+});
+
+app.get("/admin/topic-audit/data", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+
+  const limitRaw = Number(req.query.limit ?? 60);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(100, Math.round(limitRaw)))
+    : 60;
+  const pageRaw = Number(req.query.page ?? 1);
+  const page = Number.isFinite(pageRaw)
+    ? Math.max(1, Math.min(20, Math.round(pageRaw)))
+    : 1;
+  const provider = "newsapi_ai";
+  const now = Date.now();
+  const requestedTopicTargets = resolveRequestedTopicTargets("All");
+
+  try {
+    const result = await fetchNewsApiArticles({
+      apiKey: NEWSAPI_AI_KEY,
+      category: "All",
+      limit,
+      page,
+      sourceUri: NEWSAPI_AI_SOURCE_URI,
+      sourceKeyword: NEWSAPI_AI_SOURCE_URI ? "" : NEWSAPI_AI_SOURCE_KEYWORD
+    });
+    const rawArticles = Array.isArray(result?.articles) ? result.articles : [];
+    const seenArticleKeys = new Set();
+    const articles = [];
+    for (const article of rawArticles) {
+      const dedupeKey =
+        typeof article?.id === "string" && article.id.length > 0
+          ? article.id
+          : `${article?.title || ""}::${article?.publishedAt || ""}`;
+      if (seenArticleKeys.has(dedupeKey)) {
+        continue;
+      }
+      seenArticleKeys.add(dedupeKey);
+      articles.push(article);
+    }
+
+    const lengthOkArticles = articles.filter((article) => isWithinArticleWordBounds(article));
+    const classifications = await classifyArticlesMetadataBatch(lengthOkArticles);
+    const classificationByKey = new Map();
+    lengthOkArticles.forEach((article, index) => {
+      const key =
+        typeof article?.id === "string" && article.id.length > 0
+          ? article.id
+          : `${article?.title || ""}::${article?.publishedAt || ""}`;
+      classificationByKey.set(key, classifications[index] || { topic: TOPIC_NONE });
+    });
+
+    const auditedArticles = articles.map((article, index) => {
+      const key =
+        typeof article?.id === "string" && article.id.length > 0
+          ? article.id
+          : `${article?.title || ""}::${article?.publishedAt || ""}`;
+      const wordCount = countArticleWords(article);
+      const lengthOk = wordCount >= FEED_MIN_WORDS && wordCount <= FEED_MAX_WORDS;
+      const classification = lengthOk
+        ? classificationByKey.get(key) || { topic: TOPIC_NONE, tag: null }
+        : null;
+      const topic = classification?.topic || TOPIC_NONE;
+      const inTargetTopic =
+        topic !== TOPIC_NONE &&
+        requestedTopicTargets.includes(topic);
+      const eligibleForFeed = lengthOk && inTargetTopic;
+      let skipReason = "";
+      if (!lengthOk) {
+        skipReason = "word_count";
+      } else if (topic === TOPIC_NONE) {
+        skipReason = "topic_none";
+      } else if (!inTargetTopic) {
+        skipReason = "out_of_target";
+      }
+
+      return {
+        position: index + 1,
+        id: article.id ?? null,
+        title: article.title ?? "",
+        lead: article.lead ?? "",
+        publishedAt: article.publishedAt ?? null,
+        wordCount,
+        lengthOk,
+        isFresh: isFreshEnoughArticle(article, now),
+        classification,
+        eligibleForFeed,
+        skipReason
+      };
+    });
+
+    return res.json({
+      ok: true,
+      provider,
+      sourceUri: result?.sourceUri || NEWSAPI_AI_SOURCE_URI || null,
+      requestedAt: new Date().toISOString(),
+      page,
+      limit,
+      fetchedCount: articles.length,
+      auditedCount: lengthOkArticles.length,
+      eligibleCount: auditedArticles.filter((article) => article.eligibleForFeed).length,
+      topicTargets: requestedTopicTargets,
+      topicClassifierMethod: TOPIC_CLASSIFIER_METHOD,
+      topicClassifierModel: TOPIC_CLASSIFIER_MODEL,
+      topicClassifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
+      wordBounds: {
+        min: FEED_MIN_WORDS,
+        max: FEED_MAX_WORDS
+      },
+      freshArticleMaxAgeHours: FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+      articles: auditedArticles
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : "Topic audit failed."
+    });
+  }
+});
+
 app.get("/feed", async (req, res) => {
   const category = normalizeRequestedCategory(req.query.category);
   const debugRequested = String(req.query.debug || "") === "1";
@@ -3679,6 +4718,9 @@ app.get("/feed", async (req, res) => {
     let staleFallbackSelectedCount = 0;
     const selectedArticles = [];
     const seenArticleKeys = new Set();
+    const topicAuditItems = [];
+    const providerRanksByArticleKey = new Map();
+    let providerRank = 0;
     const topicBuckets = new Map();
     const staleFallbackBuckets = new Map();
     if (isBalancedAllRequest) {
@@ -3731,14 +4773,13 @@ app.get("/feed", async (req, res) => {
 
       const pageArticles = [];
       for (const candidate of pageArticlesRaw) {
-        const dedupeKey =
-          typeof candidate?.id === "string" && candidate.id.length > 0
-            ? candidate.id
-            : `${candidate?.title || ""}::${candidate?.publishedAt || ""}`;
+        const dedupeKey = articleAuditKey(candidate);
         if (seenArticleKeys.has(dedupeKey)) {
           continue;
         }
         seenArticleKeys.add(dedupeKey);
+        providerRank += 1;
+        providerRanksByArticleKey.set(dedupeKey, providerRank);
         pageArticles.push(candidate);
       }
       fetchedCount += pageArticles.length;
@@ -3747,6 +4788,26 @@ app.get("/feed", async (req, res) => {
       for (const candidate of pageArticles) {
         if (!isWithinArticleWordBounds(candidate)) {
           skippedLength += 1;
+          topicAuditItems.push({
+            auditKey: articleAuditKey(candidate),
+            providerRank:
+              providerRanksByArticleKey.get(articleAuditKey(candidate)) || 0,
+            articleId: candidate.id ?? null,
+            title: candidate.title ?? "",
+            lead: candidate.lead ?? null,
+            publishedAt: candidate.publishedAt ?? null,
+            wordCount: countArticleWords(candidate),
+            lengthOk: false,
+            isFresh: isFreshEnoughArticle(candidate, now),
+            classifiedTopic: null,
+            topicTag: null,
+            eligibleForFeed: false,
+            selectedForSnapshot: false,
+            skipReason: "word_count",
+            classifierStatus: "skipped_length",
+            fallbackUsed: false,
+            metadata: {}
+          });
           continue;
         }
         candidateArticles.push(candidate);
@@ -3767,6 +4828,37 @@ app.get("/feed", async (req, res) => {
           const candidate = candidateBatch[index];
           const classification = classifications[index] || { topic: TOPIC_NONE };
           const topic = classification.topic;
+          const candidateAuditKey = articleAuditKey(candidate);
+          const inTargetTopic =
+            topic !== TOPIC_NONE &&
+            (!Array.isArray(requestedTopicTargets) ||
+              requestedTopicTargets.length === 0 ||
+              requestedTopicTargets.includes(topic));
+          topicAuditItems.push({
+            auditKey: candidateAuditKey,
+            providerRank:
+              providerRanksByArticleKey.get(candidateAuditKey) || 0,
+            articleId: candidate.id ?? null,
+            title: candidate.title ?? "",
+            lead: candidate.lead ?? null,
+            publishedAt: candidate.publishedAt ?? null,
+            wordCount: countArticleWords(candidate),
+            lengthOk: true,
+            isFresh: isFreshEnoughArticle(candidate, now),
+            classifiedTopic: topic,
+            topicTag: classification.tag ?? null,
+            eligibleForFeed: inTargetTopic,
+            selectedForSnapshot: false,
+            skipReason:
+              topic === TOPIC_NONE
+                ? "topic_none"
+                : inTargetTopic
+                  ? ""
+                  : "out_of_target",
+            classifierStatus: "classified",
+            fallbackUsed: false,
+            metadata: {}
+          });
           if (topic === TOPIC_NONE) {
             skippedNone += 1;
             continue;
@@ -3864,6 +4956,18 @@ app.get("/feed", async (req, res) => {
       }
     }
 
+    const selectedArticleKeys = new Set(selectedArticles.map((article) => articleAuditKey(article)));
+    for (const item of topicAuditItems) {
+      if (selectedArticleKeys.has(item.auditKey)) {
+        item.selectedForSnapshot = true;
+        item.skipReason = "selected";
+      } else if (item.eligibleForFeed && !item.skipReason) {
+        item.skipReason = item.isFresh
+          ? "topic_bucket_full"
+          : "stale_fallback_not_needed";
+      }
+    }
+
     const articles = selectedArticles.map((article) => ({
       ...article,
       variants: buildVariants(article),
@@ -3896,6 +5000,36 @@ app.get("/feed", async (req, res) => {
         limitCount: limit,
         provider,
         articles
+      });
+      const auditResult = await saveTopicClassificationAuditRunBestEffort({
+        snapshotDate,
+        category,
+        limitCount: limit,
+        provider,
+        sourceUri: sourceUriUsed || NEWSAPI_AI_SOURCE_URI || null,
+        classifierMethod: TOPIC_CLASSIFIER_METHOD,
+        classifierModel: TOPIC_CLASSIFIER_MODEL,
+        classifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
+        feedPerTopicTarget: FEED_PER_TOPIC_TARGET,
+        freshArticleMaxAgeHours: FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+        pagesFetched,
+        fetchedCount,
+        auditedCount: topicAuditItems.length,
+        eligibleCount: topicAuditItems.filter((item) => item.eligibleForFeed).length,
+        selectedCount: articles.length,
+        snapshotId: saveResult.snapshotId,
+        status: "completed",
+        metadata: {
+          topicTargets: requestedTopicTargets,
+          perTopicTarget,
+          fetchCountPerPage: fetchCount,
+          skippedLength,
+          skippedNone,
+          skippedOutOfTarget,
+          freshSelectedCount,
+          staleFallbackSelectedCount
+        },
+        items: topicAuditItems
       });
       let toneRewriteQueued = false;
       let rewriteStats = null;
@@ -4000,6 +5134,7 @@ app.get("/feed", async (req, res) => {
         snapshotStatus: responseSnapshot?.status || SNAPSHOT_STATUS_BUILDING,
         toneRewriteQueued,
         rewriteJobStats: rewriteStats,
+        topicAuditRunId: auditResult.auditRunId,
         refreshRequested,
         rebuildRequested,
         freshnessPolicy: "fresh_first_with_stale_fallback",
@@ -4027,6 +5162,37 @@ app.get("/feed", async (req, res) => {
         cacheTtlMs: FEED_CACHE_TTL_MS
       });
     }
+
+    const auditResult = await saveTopicClassificationAuditRunBestEffort({
+      snapshotDate,
+      category,
+      limitCount: limit,
+      provider,
+      sourceUri: sourceUriUsed || NEWSAPI_AI_SOURCE_URI || null,
+      classifierMethod: TOPIC_CLASSIFIER_METHOD,
+      classifierModel: TOPIC_CLASSIFIER_MODEL,
+      classifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
+      feedPerTopicTarget: FEED_PER_TOPIC_TARGET,
+      freshArticleMaxAgeHours: FEED_FRESH_ARTICLE_MAX_AGE_HOURS,
+      pagesFetched,
+      fetchedCount,
+      auditedCount: topicAuditItems.length,
+      eligibleCount: topicAuditItems.filter((item) => item.eligibleForFeed).length,
+      selectedCount: 0,
+      snapshotId: null,
+      status: "no_selection",
+      metadata: {
+        topicTargets: requestedTopicTargets,
+        perTopicTarget,
+        fetchCountPerPage: fetchCount,
+        skippedLength,
+        skippedNone,
+        skippedOutOfTarget,
+        freshSelectedCount,
+        staleFallbackSelectedCount
+      },
+      items: topicAuditItems
+    });
 
     const fallbackSnapshot =
       currentPublishedSnapshot ||
@@ -4070,6 +5236,7 @@ app.get("/feed", async (req, res) => {
         snapshotDate: fallbackSnapshot.snapshotDate,
         refreshRequested,
         fallbackUsed: true,
+        topicAuditRunId: auditResult.auditRunId,
         topicTargets: requestedTopicTargets,
         perTopicTarget,
         countsByTopic: fallbackCountsByTopic,
@@ -4101,6 +5268,7 @@ app.get("/feed", async (req, res) => {
       cached: false,
       snapshotDate,
       refreshRequested,
+      topicAuditRunId: auditResult.auditRunId,
       topicTargets: requestedTopicTargets,
       perTopicTarget,
       countsByTopic: emptyCountsByTopic,
