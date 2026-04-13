@@ -4155,9 +4155,9 @@ app.get("/admin/topic-audit", (_req, res) => {
     main { max-width: 1280px; margin: 0 auto; }
     h1 { margin: 0 0 8px; font-size: 32px; }
     p { color: var(--muted); }
-    form { display: grid; grid-template-columns: minmax(280px, 1fr) 110px 90px auto; gap: 10px; align-items: end; margin: 20px 0; padding: 16px; background: var(--card); border: 1px solid var(--border); }
+    form { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 140px auto; gap: 10px; align-items: end; margin: 20px 0; padding: 16px; background: var(--card); border: 1px solid var(--border); }
     label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
-    input, button { font: inherit; padding: 9px 10px; border: 1px solid var(--border); background: white; }
+    input, select, button { font: inherit; padding: 9px 10px; border: 1px solid var(--border); background: white; }
     button { cursor: pointer; background: #1d1a16; color: white; }
     table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); }
     th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; font-size: 14px; }
@@ -4179,6 +4179,16 @@ app.get("/admin/topic-audit", (_req, res) => {
     <form id="controls">
       <label>Admin token <input id="token" name="token" type="password" autocomplete="off" placeholder="PIPELINE_ADMIN_TOKEN" /></label>
       <label>Run ID <input id="runId" name="runId" type="number" min="1" placeholder="latest" /></label>
+      <label>Topic
+        <select id="topicFilter" name="topicFilter">
+          <option value="All">All topics</option>
+          <option value="Politics">Politics</option>
+          <option value="Economy">Economy</option>
+          <option value="US">US</option>
+          <option value="World">World</option>
+          <option value="None">None</option>
+        </select>
+      </label>
       <button type="submit">Load audit</button>
     </form>
     <p id="summary" class="muted"></p>
@@ -4207,8 +4217,12 @@ app.get("/admin/topic-audit", (_req, res) => {
     const summary = document.getElementById("summary");
     const error = document.getElementById("error");
     const tokenInput = document.getElementById("token");
+    const topicFilter = document.getElementById("topicFilter");
     const savedToken = window.sessionStorage.getItem("topicAuditAdminToken") || "";
+    const savedTopicFilter = window.sessionStorage.getItem("topicAuditTopicFilter") || "All";
+    let lastPayload = null;
     tokenInput.value = savedToken;
+    topicFilter.value = savedTopicFilter;
 
     function text(value) {
       return value == null ? "" : String(value);
@@ -4226,6 +4240,66 @@ app.get("/admin/topic-audit", (_req, res) => {
       span.textContent = text(value);
       return span;
     }
+
+    function renderAudit(payload) {
+      rows.replaceChildren();
+      if (!payload || !payload.run) {
+        return;
+      }
+
+      const selectedTopic = topicFilter.value || "All";
+      const articles = Array.isArray(payload.articles) ? payload.articles : [];
+      const visibleArticles = selectedTopic === "All"
+        ? articles
+        : articles.filter((item) => (item.classification?.topic || "None") === selectedTopic);
+      const selectorStats = Array.isArray(payload.run.metadata?.feedSelectorStats)
+        ? payload.run.metadata.feedSelectorStats
+            .map((entry) => entry.topic + ": " + entry.selectedCount + "/" + entry.candidateCount)
+            .join(", ")
+        : "";
+      summary.textContent = [
+        "Run " + payload.run.id,
+        "created " + payload.run.createdAt,
+        "fetched " + payload.run.fetchedCount,
+        "audited " + payload.run.auditedCount,
+        "eligible " + payload.run.eligibleCount,
+        "selected " + payload.run.selectedCount,
+        "showing " + visibleArticles.length + "/" + articles.length,
+        selectedTopic !== "All" ? "filter " + selectedTopic : "",
+        "method " + payload.run.classifierMethod,
+        "model " + payload.run.classifierModel,
+        selectorStats ? "selector " + selectorStats : ""
+      ].filter(Boolean).join(" | ");
+
+      for (const item of visibleArticles) {
+        const tr = document.createElement("tr");
+        const status = item.selectedForSnapshot ? "selected" : item.skipReason;
+        tr.appendChild(cell(item.position));
+        const topicTd = document.createElement("td");
+        topicTd.appendChild(pill(item.classification?.topic || "unclassified", item.classification?.topic === "None" ? "bad" : "good"));
+        tr.appendChild(topicTd);
+        const statusTd = document.createElement("td");
+        statusTd.appendChild(pill(status, item.selectedForSnapshot ? "good" : "warn"));
+        tr.appendChild(statusTd);
+        const selectorStatus = item.metadata?.feedSelectorReason ||
+          (item.metadata?.selectorCandidate ? "candidate" : "");
+        tr.appendChild(cell(selectorStatus));
+        tr.appendChild(cell(item.publishedAt || ""));
+        tr.appendChild(cell(item.wordCount));
+        tr.appendChild(cell(item.isFresh ? "yes" : "no"));
+        tr.appendChild(cell(item.title));
+        tr.appendChild(cell(item.lead));
+        tr.appendChild(cell(item.classification?.tag || ""));
+        rows.appendChild(tr);
+      }
+    }
+
+    topicFilter.addEventListener("change", () => {
+      window.sessionStorage.setItem("topicAuditTopicFilter", topicFilter.value || "All");
+      if (lastPayload) {
+        renderAudit(lastPayload);
+      }
+    });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -4253,44 +4327,8 @@ app.get("/admin/topic-audit", (_req, res) => {
           return;
         }
 
-        const selectorStats = Array.isArray(payload.run.metadata?.feedSelectorStats)
-          ? payload.run.metadata.feedSelectorStats
-              .map((entry) => entry.topic + ": " + entry.selectedCount + "/" + entry.candidateCount)
-              .join(", ")
-          : "";
-        summary.textContent = [
-          "Run " + payload.run.id,
-          "created " + payload.run.createdAt,
-          "fetched " + payload.run.fetchedCount,
-          "audited " + payload.run.auditedCount,
-          "eligible " + payload.run.eligibleCount,
-          "selected " + payload.run.selectedCount,
-          "method " + payload.run.classifierMethod,
-          "model " + payload.run.classifierModel,
-          selectorStats ? "selector " + selectorStats : ""
-        ].filter(Boolean).join(" | ");
-
-        for (const item of payload.articles) {
-          const tr = document.createElement("tr");
-          const status = item.selectedForSnapshot ? "selected" : item.skipReason;
-          tr.appendChild(cell(item.position));
-          const topicTd = document.createElement("td");
-          topicTd.appendChild(pill(item.classification?.topic || "unclassified", item.classification?.topic === "None" ? "bad" : "good"));
-          tr.appendChild(topicTd);
-          const statusTd = document.createElement("td");
-          statusTd.appendChild(pill(status, item.selectedForSnapshot ? "good" : "warn"));
-          tr.appendChild(statusTd);
-          const selectorStatus = item.metadata?.feedSelectorReason ||
-            (item.metadata?.selectorCandidate ? "candidate" : "");
-          tr.appendChild(cell(selectorStatus));
-          tr.appendChild(cell(item.publishedAt || ""));
-          tr.appendChild(cell(item.wordCount));
-          tr.appendChild(cell(item.isFresh ? "yes" : "no"));
-          tr.appendChild(cell(item.title));
-          tr.appendChild(cell(item.lead));
-          tr.appendChild(cell(item.classification?.tag || ""));
-          rows.appendChild(tr);
-        }
+        lastPayload = payload;
+        renderAudit(payload);
       } catch (err) {
         summary.textContent = "";
         error.textContent = err instanceof Error ? err.message : String(err);
