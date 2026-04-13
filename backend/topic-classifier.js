@@ -4,7 +4,8 @@ const TOPIC_CLASSIFIER_MODEL =
   process.env.TOPIC_CLASSIFIER_MODEL ||
   process.env.OPENAI_MODEL ||
   "gpt-5-mini-2025-08-07";
-const TOPIC_CLASSIFIER_METHOD = "keyword_gate_llm_v1";
+const TOPIC_CLASSIFIER_METHOD =
+  process.env.TOPIC_CLASSIFIER_METHOD || "llm_batch_keyword_fallback_v1";
 const TOPIC_CLASSIFIER_ENABLED =
   String(process.env.TOPIC_CLASSIFIER_ENABLED || "true").toLowerCase() !==
   "false";
@@ -16,6 +17,14 @@ const TOPIC_CLASSIFIER_TIMEOUT_MS = Number.isFinite(
 )
   ? Math.max(5000, TOPIC_CLASSIFIER_TIMEOUT_MS_RAW)
   : 30000;
+const TOPIC_CLASSIFIER_BATCH_SIZE_RAW = Number(
+  process.env.TOPIC_CLASSIFIER_BATCH_SIZE || 20
+);
+const TOPIC_CLASSIFIER_BATCH_SIZE = Number.isFinite(
+  TOPIC_CLASSIFIER_BATCH_SIZE_RAW
+)
+  ? Math.max(1, Math.min(50, Math.round(TOPIC_CLASSIFIER_BATCH_SIZE_RAW)))
+  : 20;
 
 const FOCUSED_TOPIC_OPTIONS = Object.freeze([
   "Technology",
@@ -239,6 +248,33 @@ const TOPIC_CLASSIFIER_SYSTEM_PROMPT = [
   "Output requirements:",
   '- Return exactly one JSON object and no other text.',
   '- Use this format: {"topic":"<label>"}'
+].join("\n");
+
+const TOPIC_CLASSIFIER_BATCH_SYSTEM_PROMPT = [
+  "You are classifying news articles into exactly one primary topic each.",
+  `Allowed labels: ${TOPIC_OPTIONS.join(", ")}, ${TOPIC_NONE}.`,
+  "",
+  "Decision rule:",
+  "- For each article, pick the one label that best matches the article's central news angle.",
+  "- Ignore brief mentions, background context, secondary themes, and downstream effects.",
+  `- Use "${TOPIC_NONE}" when the main subject is not primarily ${TOPIC_OPTIONS.join(", ")}, including sports, entertainment, lifestyle, health, crime, weather, culture, science without a clear technology angle, or general world news outside the allowed labels.`,
+  "",
+  "Label definitions:",
+  '- "Technology": the article is mainly about software, hardware, AI, cybersecurity, semiconductors, consumer devices, tech companies, startups, or digital platforms.',
+  '- "Politics": the article is mainly about governments, elections, campaigns, public officials, legislation, courts, public policy, diplomacy, or political power.',
+  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, or macroeconomic trends.',
+  "",
+  "Tie-breakers:",
+  '- If the story is about a government action, election, law, or political dispute, choose "Politics" even if it affects the economy or technology.',
+  '- If the story is about markets, inflation, jobs, company earnings, or economic conditions, choose "Economy" unless the core event is primarily political.',
+  '- If the story is about a product, platform, AI model, cyber incident, chipmaker, or tech company operation, choose "Technology" unless the core event is primarily political or macroeconomic.',
+  '- For company news, choose "Technology" only when the company is a tech company and the article is mainly about its technology, products, platforms, or operations; choose "Economy" when the focus is earnings, stock moves, layoffs, demand, or broader business conditions.',
+  "",
+  "Output requirements:",
+  "- Return exactly one JSON object and no other text.",
+  '- Use this format: {"classifications":[{"id":"<input id>","topic":"<label>"}]}',
+  "- Return one classification for every input article.",
+  "- Preserve each input id exactly."
 ].join("\n");
 
 function extractMessageContent(messageContent) {
@@ -485,6 +521,31 @@ function buildArticleInput(article) {
   };
 }
 
+function buildBatchArticleInput(article, index) {
+  const sections = buildSections(article);
+  return {
+    id: `article_${index}`,
+    title: sections.title,
+    lead: sections.lead
+  };
+}
+
+function extractBatchClassificationEntries(parsed) {
+  if (Array.isArray(parsed?.classifications)) {
+    return parsed.classifications;
+  }
+  if (Array.isArray(parsed?.articles)) {
+    return parsed.articles;
+  }
+  if (Array.isArray(parsed?.items)) {
+    return parsed.items;
+  }
+  if (Array.isArray(parsed?.results)) {
+    return parsed.results;
+  }
+  return [];
+}
+
 async function classifyWithLlm(article) {
   const controller = new AbortController();
   const timeout = setTimeout(
@@ -547,6 +608,89 @@ async function classifyWithLlm(article) {
   }
 }
 
+async function classifyWithLlmBatch(articles) {
+  const inputs = articles.map((article, index) => buildBatchArticleInput(article, index));
+  const inputIds = new Set(inputs.map((entry) => entry.id));
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    TOPIC_CLASSIFIER_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(`${OPENAI_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: TOPIC_CLASSIFIER_MODEL,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: TOPIC_CLASSIFIER_BATCH_SYSTEM_PROMPT
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ articles: inputs })
+          }
+        ]
+      }),
+      signal: controller.signal
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `Topic classification batch failed: ${response.status} ${response.statusText} - ${text}`
+      );
+    }
+
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+
+    const content = extractMessageContent(payload?.choices?.[0]?.message?.content);
+    const parsed = parseJsonObject(content);
+    const entries = extractBatchClassificationEntries(parsed);
+    const byId = new Map();
+    for (const entry of entries) {
+      const id = coerceToString(entry?.id || entry?.articleId).trim();
+      if (!inputIds.has(id)) continue;
+      const topicCandidate = normalizeTopic(entry?.topic || entry?.category);
+      const topic = TOPIC_OPTIONS.includes(topicCandidate)
+        ? topicCandidate
+        : TOPIC_NONE;
+      byId.set(id, {
+        topic,
+        tag: normalizeTag(entry?.tag) || null
+      });
+    }
+
+    return inputs.map((input, index) => {
+      const classification = byId.get(input.id);
+      if (!classification) {
+        return null;
+      }
+      const topic = classification?.topic || TOPIC_NONE;
+      return {
+        topic,
+        tag:
+          normalizeTag(classification?.tag) ||
+          fallbackTag(articles[index], topic)
+      };
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function classifyArticleMetadata(article) {
   const cacheKey =
     typeof article?.id === "string" && article.id.length > 0
@@ -561,7 +705,15 @@ async function classifyArticleMetadata(article) {
   }
 
   const keywordClassification = classifyWithKeywords(article);
-  if (keywordClassification.topic === TOPIC_NONE || !OPENAI_API_KEY) {
+  if (!OPENAI_API_KEY) {
+    topicCache.set(cacheKey, keywordClassification);
+    return keywordClassification;
+  }
+
+  if (
+    TOPIC_CLASSIFIER_METHOD === "keyword_gate_llm_v1" &&
+    keywordClassification.topic === TOPIC_NONE
+  ) {
     topicCache.set(cacheKey, keywordClassification);
     return keywordClassification;
   }
@@ -575,6 +727,77 @@ async function classifyArticleMetadata(article) {
 
   topicCache.set(cacheKey, classification);
   return classification;
+}
+
+async function classifyArticlesMetadataBatch(articles) {
+  if (!Array.isArray(articles) || articles.length === 0) {
+    return [];
+  }
+  if (!TOPIC_CLASSIFIER_ENABLED) {
+    throw new Error("Topic classifier is disabled.");
+  }
+
+  const results = new Array(articles.length);
+  const pending = [];
+
+  for (let index = 0; index < articles.length; index += 1) {
+    const article = articles[index];
+    const cacheKey =
+      typeof article?.id === "string" && article.id.length > 0
+        ? article.id
+        : `${article?.title || ""}::${article?.publishedAt || ""}`;
+    if (topicCache.has(cacheKey)) {
+      results[index] = topicCache.get(cacheKey);
+      continue;
+    }
+
+    const keywordClassification = classifyWithKeywords(article);
+    if (
+      !OPENAI_API_KEY ||
+      (
+        TOPIC_CLASSIFIER_METHOD === "keyword_gate_llm_v1" &&
+        keywordClassification.topic === TOPIC_NONE
+      )
+    ) {
+      topicCache.set(cacheKey, keywordClassification);
+      results[index] = keywordClassification;
+      continue;
+    }
+
+    pending.push({
+      article,
+      index,
+      cacheKey,
+      keywordClassification
+    });
+  }
+
+  for (
+    let start = 0;
+    start < pending.length;
+    start += TOPIC_CLASSIFIER_BATCH_SIZE
+  ) {
+    const batch = pending.slice(start, start + TOPIC_CLASSIFIER_BATCH_SIZE);
+    const fallbackClassifications = batch.map((entry) => entry.keywordClassification);
+    let batchClassifications = fallbackClassifications;
+
+    try {
+      batchClassifications = await classifyWithLlmBatch(
+        batch.map((entry) => entry.article)
+      );
+    } catch {
+      batchClassifications = fallbackClassifications;
+    }
+
+    batch.forEach((entry, batchIndex) => {
+      const classification =
+        batchClassifications[batchIndex] || entry.keywordClassification;
+      topicCache.set(entry.cacheKey, classification);
+      results[entry.index] = classification;
+    });
+  }
+
+  return results;
 }
 
 async function classifyArticleTopic(article) {
@@ -602,6 +825,8 @@ module.exports = {
   TOPIC_CLASSIFIER_METHOD,
   TOPIC_CLASSIFIER_MODEL,
   TOPIC_CLASSIFIER_ENABLED,
+  TOPIC_CLASSIFIER_BATCH_SIZE,
+  classifyArticlesMetadataBatch,
   classifyArticleMetadata,
   classifyArticleTopic,
   normalizeTopic,

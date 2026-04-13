@@ -33,9 +33,10 @@ const {
   TOPIC_CLASSIFIER_METHOD,
   TOPIC_CLASSIFIER_MODEL,
   TOPIC_CLASSIFIER_ENABLED,
+  TOPIC_CLASSIFIER_BATCH_SIZE,
   TOPIC_DEFAULT_FILTERS_CSV,
   TOPIC_NONE,
-  classifyArticleMetadata,
+  classifyArticlesMetadataBatch,
   normalizeTopic,
   parseTopicListCsv
 } = require("./topic-classifier");
@@ -3160,6 +3161,7 @@ app.get("/health", async (_req, res) => {
     topicClassifierEnabled: TOPIC_CLASSIFIER_ENABLED,
     topicClassifierMethod: TOPIC_CLASSIFIER_METHOD,
     topicClassifierModel: TOPIC_CLASSIFIER_MODEL,
+    topicClassifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
     feedTopicTargets: FEED_TOPIC_TARGETS,
     feedFetchMaxPages: FEED_FETCH_MAX_PAGES
   });
@@ -3741,50 +3743,72 @@ app.get("/feed", async (req, res) => {
       }
       fetchedCount += pageArticles.length;
 
+      const candidateArticles = [];
       for (const candidate of pageArticles) {
         if (!isWithinArticleWordBounds(candidate)) {
           skippedLength += 1;
           continue;
         }
-        const classification = await classifyArticleMetadata(candidate);
-        const topic = classification.topic;
-        if (topic === TOPIC_NONE) {
-          skippedNone += 1;
-          continue;
-        }
-        if (
-          Array.isArray(requestedTopicTargets) &&
-          requestedTopicTargets.length > 0 &&
-          !requestedTopicTargets.includes(topic)
-        ) {
-          skippedOutOfTarget += 1;
-          continue;
-        }
+        candidateArticles.push(candidate);
+      }
 
-        classifiedAccepted += 1;
-        const mappedArticle = {
-          ...candidate,
-          category: topic,
-          topicLabel: topic,
-          topicTag: classification.tag ?? null
-        };
+      for (
+        let start = 0;
+        start < candidateArticles.length;
+        start += TOPIC_CLASSIFIER_BATCH_SIZE
+      ) {
+        const candidateBatch = candidateArticles.slice(
+          start,
+          start + TOPIC_CLASSIFIER_BATCH_SIZE
+        );
+        const classifications = await classifyArticlesMetadataBatch(candidateBatch);
 
-        if (isBalancedAllRequest) {
-          const bucket = topicBuckets.get(topic);
-          const staleBucket = staleFallbackBuckets.get(topic);
-          if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
-            if (isFreshEnoughArticle(mappedArticle, now)) {
-              bucket.push(mappedArticle);
-              freshSelectedCount += 1;
-            } else if (Array.isArray(staleBucket)) {
-              staleBucket.push(mappedArticle);
-            }
+        for (let index = 0; index < candidateBatch.length; index += 1) {
+          const candidate = candidateBatch[index];
+          const classification = classifications[index] || { topic: TOPIC_NONE };
+          const topic = classification.topic;
+          if (topic === TOPIC_NONE) {
+            skippedNone += 1;
+            continue;
           }
-        } else if (isFreshEnoughArticle(mappedArticle, now)) {
-          selectedArticles.push(mappedArticle);
-          freshSelectedCount += 1;
-        } else {
-          staleFallbackArticles.push(mappedArticle);
+          if (
+            Array.isArray(requestedTopicTargets) &&
+            requestedTopicTargets.length > 0 &&
+            !requestedTopicTargets.includes(topic)
+          ) {
+            skippedOutOfTarget += 1;
+            continue;
+          }
+
+          classifiedAccepted += 1;
+          const mappedArticle = {
+            ...candidate,
+            category: topic,
+            topicLabel: topic,
+            topicTag: classification.tag ?? null
+          };
+
+          if (isBalancedAllRequest) {
+            const bucket = topicBuckets.get(topic);
+            const staleBucket = staleFallbackBuckets.get(topic);
+            if (Array.isArray(bucket) && bucket.length < FEED_PER_TOPIC_TARGET) {
+              if (isFreshEnoughArticle(mappedArticle, now)) {
+                bucket.push(mappedArticle);
+                freshSelectedCount += 1;
+              } else if (Array.isArray(staleBucket)) {
+                staleBucket.push(mappedArticle);
+              }
+            }
+          } else if (isFreshEnoughArticle(mappedArticle, now)) {
+            selectedArticles.push(mappedArticle);
+            freshSelectedCount += 1;
+          } else {
+            staleFallbackArticles.push(mappedArticle);
+          }
+
+          if (hasReachedTarget()) {
+            break;
+          }
         }
 
         if (hasReachedTarget()) {
