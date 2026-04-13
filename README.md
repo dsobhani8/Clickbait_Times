@@ -23,20 +23,20 @@ Mobile news experiment app with:
 
 ### 3. Topic Classification
 - Classifier code: `backend/topic-classifier.js`
-- Active method: keyword gate + LLM classifier
+- Active method: batched LLM classifier with keyword fallback
   - constant: `TOPIC_CLASSIFIER_METHOD`
 - Allowed labels:
-  - `Technology`
   - `Politics`
   - `Economy`
+  - `US`
+  - `World`
   - `None`
 - The classifier uses:
   - title
   - lead
   - first few body paragraphs
-- A weighted keyword pass first removes obvious out-of-scope articles.
-- Articles that pass the keyword gate are then classified by the LLM.
-- If the LLM fails, the backend falls back to the keyword classification.
+- Articles are classified in LLM batches.
+- If the LLM batch fails, the backend falls back to keyword classification.
 
 ### 4. Feed Selection
 - Orchestration: `backend/events-server.js`
@@ -82,8 +82,9 @@ Original article
 
 ### Topic Classification
 - `backend/topic-classifier.js`
-  - keyword gate
-  - inline LLM classifier prompt
+  - batched LLM classifier
+  - keyword fallback
+  - inline classifier prompts
   - no separate runtime prompt file
 
 ### Rewrite Prompts

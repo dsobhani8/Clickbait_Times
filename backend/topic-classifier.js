@@ -27,9 +27,10 @@ const TOPIC_CLASSIFIER_BATCH_SIZE = Number.isFinite(
   : 20;
 
 const FOCUSED_TOPIC_OPTIONS = Object.freeze([
-  "Technology",
   "Politics",
-  "Economy"
+  "Economy",
+  "US",
+  "World"
 ]);
 const TOPIC_NONE = "None";
 const TOPIC_OPTIONS = FOCUSED_TOPIC_OPTIONS;
@@ -43,59 +44,6 @@ const SECTION_WEIGHTS = Object.freeze({
 });
 
 const KEYWORDS_BY_TOPIC = Object.freeze({
-  Technology: Object.freeze([
-    "ai",
-    "a.i.",
-    "artificial intelligence",
-    "machine learning",
-    "software",
-    "technology",
-    "tech",
-    "internet",
-    "online",
-    "digital",
-    "digital platform",
-    "social media",
-    "app store",
-    "chip",
-    "chips",
-    "semiconductor",
-    "semiconductors",
-    "cyber",
-    "cyberattack",
-    "cybersecurity",
-    "hack",
-    "hacked",
-    "cloud",
-    "data center",
-    "data centers",
-    "smartphone",
-    "smartphones",
-    "device",
-    "devices",
-    "startup",
-    "startups",
-    "tech company",
-    "tech giant",
-    "algorithm",
-    "robot",
-    "robots",
-    "robotics",
-    "automation",
-    "electric vehicle",
-    "ev",
-    "crypto",
-    "cryptocurrency",
-    "bitcoin",
-    "privacy",
-    "openai",
-    "microsoft",
-    "google",
-    "apple",
-    "meta",
-    "tesla",
-    "nvidia"
-  ]),
   Politics: Object.freeze([
     "election",
     "elections",
@@ -167,11 +115,113 @@ const KEYWORDS_BY_TOPIC = Object.freeze({
     "housing market",
     "manufacturing",
     "factory activity"
+  ]),
+  US: Object.freeze([
+    "united states",
+    "u.s.",
+    "u.s",
+    "america",
+    "american",
+    "americans",
+    "california",
+    "texas",
+    "florida",
+    "new york",
+    "washington",
+    "chicago",
+    "los angeles",
+    "san francisco",
+    "boston",
+    "philadelphia",
+    "atlanta",
+    "miami",
+    "detroit",
+    "seattle",
+    "denver",
+    "arizona",
+    "michigan",
+    "ohio",
+    "pennsylvania",
+    "georgia",
+    "north carolina",
+    "south carolina",
+    "louisiana",
+    "mississippi",
+    "tennessee",
+    "wisconsin",
+    "minnesota",
+    "colorado",
+    "nevada",
+    "oregon",
+    "alaska",
+    "hawaii"
+  ]),
+  World: Object.freeze([
+    "global",
+    "international",
+    "foreign",
+    "europe",
+    "european",
+    "asia",
+    "asian",
+    "africa",
+    "african",
+    "middle east",
+    "latin america",
+    "caribbean",
+    "china",
+    "chinese",
+    "russia",
+    "russian",
+    "ukraine",
+    "ukrainian",
+    "iran",
+    "iranian",
+    "israel",
+    "israeli",
+    "gaza",
+    "palestinian",
+    "india",
+    "indian",
+    "pakistan",
+    "japan",
+    "japanese",
+    "korea",
+    "korean",
+    "taiwan",
+    "mexico",
+    "canada",
+    "britain",
+    "british",
+    "france",
+    "french",
+    "germany",
+    "german",
+    "italy",
+    "italian",
+    "spain",
+    "spanish",
+    "brazil",
+    "argentina",
+    "australia",
+    "australian",
+    "cuba",
+    "haiti",
+    "peru",
+    "south africa",
+    "hungary",
+    "orbán",
+    "orban"
   ])
 });
 
 const NONE_KEYWORDS = Object.freeze([
   "sports",
+  "world cup",
+  "cup",
+  "masters",
+  "playoff",
+  "playoffs",
   "football",
   "basketball",
   "baseball",
@@ -208,21 +258,9 @@ const NONE_KEYWORDS = Object.freeze([
   "celebrity",
   "fashion",
   "travel",
-  "weather",
-  "storm",
-  "hurricane",
-  "earthquake",
-  "crime",
-  "police",
-  "shooting",
-  "murder",
-  "hospital",
-  "disease",
-  "virus",
-  "health",
-  "wildfire",
-  "accident",
-  "crash"
+  "horoscope",
+  "recipe",
+  "obituary"
 ]);
 
 const TOPIC_CLASSIFIER_SYSTEM_PROMPT = [
@@ -232,18 +270,19 @@ const TOPIC_CLASSIFIER_SYSTEM_PROMPT = [
   "Decision rule:",
   "- Pick the one label that best matches the article's central news angle.",
   "- Ignore brief mentions, background context, secondary themes, and downstream effects.",
-  `- Use "${TOPIC_NONE}" when the main subject is not primarily ${TOPIC_OPTIONS.join(", ")}, including sports, entertainment, lifestyle, health, crime, weather, culture, science without a clear technology angle, or general world news outside the allowed labels.`,
+  `- Use "${TOPIC_NONE}" for sports, entertainment, celebrity, lifestyle, travel, service journalism, previews, listings, opinion, or article records whose title and lead/body are clearly about different stories.`,
   "",
   "Label definitions:",
-  '- "Technology": the article is mainly about software, hardware, AI, cybersecurity, semiconductors, consumer devices, tech companies, startups, or digital platforms.',
   '- "Politics": the article is mainly about governments, elections, campaigns, public officials, legislation, courts, public policy, diplomacy, or political power.',
-  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, or macroeconomic trends.',
+  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, energy prices, tariffs, or macroeconomic trends.',
+  '- "US": the article is mainly about public-interest news in the United States and is not primarily Politics or Economy.',
+  '- "World": the article is mainly about public-interest news outside the United States and is not primarily Politics or Economy.',
   "",
   "Tie-breakers:",
-  '- If the story is about a government action, election, law, or political dispute, choose "Politics" even if it affects the economy or technology.',
-  '- If the story is about markets, inflation, jobs, company earnings, or economic conditions, choose "Economy" unless the core event is primarily political.',
-  '- If the story is about a product, platform, AI model, cyber incident, chipmaker, or tech company operation, choose "Technology" unless the core event is primarily political or macroeconomic.',
-  '- For company news, choose "Technology" only when the company is a tech company and the article is mainly about its technology, products, platforms, or operations; choose "Economy" when the focus is earnings, stock moves, layoffs, demand, or broader business conditions.',
+  '- If the story is about a government action, election, law, court, public official, campaign, diplomacy, or political dispute, choose "Politics" even if it is located in the US or abroad.',
+  '- If the story is about markets, inflation, jobs, company earnings, trade, energy prices, tariffs, or economic conditions, choose "Economy" unless the core event is primarily political.',
+  '- Use "US" only after ruling out Politics and Economy, and only when the main story is domestic US public-interest news.',
+  '- Use "World" only after ruling out Politics and Economy, and only when the main story is non-US public-interest news.',
   "",
   "Output requirements:",
   '- Return exactly one JSON object and no other text.',
@@ -257,18 +296,19 @@ const TOPIC_CLASSIFIER_BATCH_SYSTEM_PROMPT = [
   "Decision rule:",
   "- For each article, pick the one label that best matches the article's central news angle.",
   "- Ignore brief mentions, background context, secondary themes, and downstream effects.",
-  `- Use "${TOPIC_NONE}" when the main subject is not primarily ${TOPIC_OPTIONS.join(", ")}, including sports, entertainment, lifestyle, health, crime, weather, culture, science without a clear technology angle, or general world news outside the allowed labels.`,
+  `- Use "${TOPIC_NONE}" for sports, entertainment, celebrity, lifestyle, travel, service journalism, previews, listings, opinion, or article records whose title and lead/body are clearly about different stories.`,
   "",
   "Label definitions:",
-  '- "Technology": the article is mainly about software, hardware, AI, cybersecurity, semiconductors, consumer devices, tech companies, startups, or digital platforms.',
   '- "Politics": the article is mainly about governments, elections, campaigns, public officials, legislation, courts, public policy, diplomacy, or political power.',
-  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, or macroeconomic trends.',
+  '- "Economy": the article is mainly about inflation, jobs, unemployment, GDP, interest rates, central banks, markets, earnings, trade, business conditions, energy prices, tariffs, or macroeconomic trends.',
+  '- "US": the article is mainly about public-interest news in the United States and is not primarily Politics or Economy.',
+  '- "World": the article is mainly about public-interest news outside the United States and is not primarily Politics or Economy.',
   "",
   "Tie-breakers:",
-  '- If the story is about a government action, election, law, or political dispute, choose "Politics" even if it affects the economy or technology.',
-  '- If the story is about markets, inflation, jobs, company earnings, or economic conditions, choose "Economy" unless the core event is primarily political.',
-  '- If the story is about a product, platform, AI model, cyber incident, chipmaker, or tech company operation, choose "Technology" unless the core event is primarily political or macroeconomic.',
-  '- For company news, choose "Technology" only when the company is a tech company and the article is mainly about its technology, products, platforms, or operations; choose "Economy" when the focus is earnings, stock moves, layoffs, demand, or broader business conditions.',
+  '- If the story is about a government action, election, law, court, public official, campaign, diplomacy, or political dispute, choose "Politics" even if it is located in the US or abroad.',
+  '- If the story is about markets, inflation, jobs, company earnings, trade, energy prices, tariffs, or economic conditions, choose "Economy" unless the core event is primarily political.',
+  '- Use "US" only after ruling out Politics and Economy, and only when the main story is domestic US public-interest news.',
+  '- Use "World" only after ruling out Politics and Economy, and only when the main story is non-US public-interest news.',
   "",
   "Output requirements:",
   "- Return exactly one JSON object and no other text.",
@@ -342,9 +382,6 @@ function coerceToString(value) {
 
 function normalizeTopic(value) {
   const normalized = coerceToString(value).trim().toLowerCase();
-  if (normalized === "technology" || normalized === "tech") {
-    return "Technology";
-  }
   if (normalized === "politics" || normalized === "political") {
     return "Politics";
   }
@@ -356,6 +393,25 @@ function normalizeTopic(value) {
     normalized === "business"
   ) {
     return "Economy";
+  }
+  if (
+    normalized === "us" ||
+    normalized === "u.s." ||
+    normalized === "u.s" ||
+    normalized === "usa" ||
+    normalized === "united states" ||
+    normalized === "america" ||
+    normalized === "domestic"
+  ) {
+    return "US";
+  }
+  if (
+    normalized === "world" ||
+    normalized === "international" ||
+    normalized === "global" ||
+    normalized === "foreign"
+  ) {
+    return "World";
   }
   if (
     normalized === "none" ||
@@ -375,8 +431,21 @@ function normalizeTopic(value) {
   ) {
     return "Economy";
   }
-  if (normalized.includes("tech")) {
-    return "Technology";
+  if (
+    normalized.includes("united states") ||
+    normalized.includes("u.s.") ||
+    normalized.includes("usa") ||
+    normalized.includes("america")
+  ) {
+    return "US";
+  }
+  if (
+    normalized.includes("world") ||
+    normalized.includes("international") ||
+    normalized.includes("global") ||
+    normalized.includes("foreign")
+  ) {
+    return "World";
   }
 
   return TOPIC_NONE;
