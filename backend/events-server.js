@@ -4253,6 +4253,11 @@ app.get("/admin/topic-audit", (_req, res) => {
       return span;
     }
 
+    function publishedMs(item) {
+      const ms = Date.parse(item?.publishedAt || "");
+      return Number.isFinite(ms) ? ms : 0;
+    }
+
     function uniqueStrings(values) {
       return Array.from(new Set(values.filter((value) => typeof value === "string" && value.length > 0)));
     }
@@ -4301,16 +4306,22 @@ app.get("/admin/topic-audit", (_req, res) => {
       const selectedTopic = topicFilter.value || "All";
       const articles = Array.isArray(payload.articles) ? payload.articles : [];
       const selectedFreshness = freshnessFilter.value || "All";
-      const visibleArticles = articles.filter((item) => {
-        const topicMatches =
-          selectedTopic === "All" ||
-          (item.classification?.topic || "None") === selectedTopic;
-        const freshnessMatches =
-          selectedFreshness === "All" ||
-          (selectedFreshness === "Fresh" && item.isFresh) ||
-          (selectedFreshness === "Stale" && !item.isFresh);
-        return topicMatches && freshnessMatches;
-      });
+      const visibleArticles = articles
+        .filter((item) => {
+          const topicMatches =
+            selectedTopic === "All" ||
+            (item.classification?.topic || "None") === selectedTopic;
+          const freshnessMatches =
+            selectedFreshness === "All" ||
+            (selectedFreshness === "Fresh" && item.isFresh) ||
+            (selectedFreshness === "Stale" && !item.isFresh);
+          return topicMatches && freshnessMatches;
+        })
+        .sort((left, right) => {
+          const dateDiff = publishedMs(right) - publishedMs(left);
+          if (dateDiff !== 0) return dateDiff;
+          return Number(left.position || 0) - Number(right.position || 0);
+        });
       const selectorStats = Array.isArray(payload.run.metadata?.feedSelectorStats)
         ? payload.run.metadata.feedSelectorStats
             .map((entry) => entry.topic + ": " + entry.selectedCount + "/" + entry.candidateCount)
