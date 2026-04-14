@@ -4202,6 +4202,7 @@ app.get("/admin/topic-audit", (_req, res) => {
     </form>
     <p id="summary" class="muted"></p>
     <p id="projection" class="muted"></p>
+    <p id="feedStatus" class="muted"></p>
     <p id="error"></p>
     <table>
       <thead>
@@ -4226,6 +4227,7 @@ app.get("/admin/topic-audit", (_req, res) => {
     const rows = document.getElementById("rows");
     const summary = document.getElementById("summary");
     const projection = document.getElementById("projection");
+    const feedStatus = document.getElementById("feedStatus");
     const error = document.getElementById("error");
     const tokenInput = document.getElementById("token");
     const topicFilter = document.getElementById("topicFilter");
@@ -4369,6 +4371,46 @@ app.get("/admin/topic-audit", (_req, res) => {
       }
     }
 
+    async function updateCurrentFeedStatus(payload) {
+      feedStatus.textContent = "";
+      if (!payload?.run) {
+        return;
+      }
+
+      const params = new URLSearchParams();
+      params.set("category", payload.run.category || "All");
+      if (Number(payload.run.limitCount) > 0) {
+        params.set("limit", String(payload.run.limitCount));
+      }
+      feedStatus.textContent = "Checking current /feed snapshot...";
+
+      try {
+        const response = await fetch("/feed?" + params.toString());
+        const feed = await response.json();
+        if (!response.ok || !feed.ok) {
+          throw new Error(feed.error || "Feed request failed");
+        }
+
+        const auditSnapshotId = Number(payload.run.snapshotId || 0);
+        const feedSnapshotId = Number(feed.snapshotId || 0);
+        const matches =
+          auditSnapshotId > 0 &&
+          feedSnapshotId > 0 &&
+          auditSnapshotId === feedSnapshotId;
+        feedStatus.textContent = [
+          "audit snapshot " + (auditSnapshotId || "none"),
+          "current /feed snapshot " + (feedSnapshotId || "none"),
+          "feed date " + (feed.snapshotDate || "unknown"),
+          "feed count " + (feed.count ?? "unknown"),
+          matches ? "matches app feed" : "does not match app feed"
+        ].join(" | ");
+      } catch (err) {
+        feedStatus.textContent =
+          "Could not compare current /feed snapshot: " +
+          (err instanceof Error ? err.message : String(err));
+      }
+    }
+
     topicFilter.addEventListener("change", () => {
       window.sessionStorage.setItem("topicAuditTopicFilter", topicFilter.value || "All");
       if (lastPayload) {
@@ -4388,6 +4430,7 @@ app.get("/admin/topic-audit", (_req, res) => {
       rows.replaceChildren();
       summary.textContent = "Loading audit...";
       projection.textContent = "";
+      feedStatus.textContent = "";
       error.textContent = "";
 
       const token = tokenInput.value.trim();
@@ -4408,14 +4451,17 @@ app.get("/admin/topic-audit", (_req, res) => {
         if (!payload.run) {
           summary.textContent = "No saved topic audit runs yet. Trigger a feed rebuild first.";
           projection.textContent = "";
+          feedStatus.textContent = "";
           return;
         }
 
         lastPayload = payload;
         renderAudit(payload);
+        await updateCurrentFeedStatus(payload);
       } catch (err) {
         summary.textContent = "";
         projection.textContent = "";
+        feedStatus.textContent = "";
         error.textContent = err instanceof Error ? err.message : String(err);
       }
     });

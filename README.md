@@ -92,6 +92,11 @@ Original article
   - inline classifier prompts
   - no separate runtime prompt file
 
+### Feed Selector
+- `backend/feed-selector.js`
+  - `FEED_SELECTOR_SYSTEM_PROMPT`
+  - inline prompt used to choose final articles from each topic bucket
+
 ### Rewrite Prompts
 - Prompt wiring:
   - `backend/rewrite-prompts.js`

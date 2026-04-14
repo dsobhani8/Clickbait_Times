@@ -31,7 +31,7 @@ const FEED_SELECTOR_CANDIDATES_PER_TOPIC = Number.isFinite(
 const FEED_SELECTOR_SYSTEM_PROMPT = [
   "You are selecting articles for a mobile news experiment feed.",
   "",
-  "You will receive one topic bucket and a list of candidate AP articles with title, lead, body preview, publication time, freshness, and provider rank.",
+  "You will receive one topic bucket and a list of candidate AP articles with title, lead, body preview, publication time, and freshness.",
   "Select the best articles for the feed from that bucket.",
   "",
   "Primary goal:",
@@ -185,7 +185,6 @@ function buildSelectorInput({ topic, candidates, targetCount, nowMs }) {
           : null;
       return {
         id: `candidate_${index}`,
-        providerRank: candidate.providerRank,
         title: candidate.article.title || "",
         lead: candidate.article.lead || "",
         bodyPreview: getBodyPreview(candidate.article),
