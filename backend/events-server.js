@@ -7,6 +7,7 @@ const { fetchNewsApiArticles } = require("./newsapi-client");
 const {
   FEED_SELECTOR_CANDIDATES_PER_TOPIC,
   FEED_SELECTOR_ENABLED,
+  FEED_SELECTOR_FRESH_ONLY,
   FEED_SELECTOR_METHOD,
   FEED_SELECTOR_MODEL,
   selectFeedArticlesForTopic
@@ -3883,6 +3884,7 @@ app.get("/health", async (_req, res) => {
     topicClassifierModel: TOPIC_CLASSIFIER_MODEL,
     topicClassifierBatchSize: TOPIC_CLASSIFIER_BATCH_SIZE,
     feedSelectorEnabled: FEED_SELECTOR_ENABLED,
+    feedSelectorFreshOnly: FEED_SELECTOR_FRESH_ONLY,
     feedSelectorMethod: FEED_SELECTOR_METHOD,
     feedSelectorModel: FEED_SELECTOR_MODEL,
     feedSelectorCandidatesPerTopic: FEED_SELECTOR_CANDIDATES_PER_TOPIC,
@@ -4354,7 +4356,8 @@ app.get("/admin/topic-audit", (_req, res) => {
         statusTd.appendChild(pill(status, item.selectedForSnapshot ? "good" : "warn"));
         tr.appendChild(statusTd);
         const selectorStatus = item.metadata?.feedSelectorReason ||
-          (item.metadata?.selectorCandidate ? "candidate" : "");
+          (item.skipReason === "freshness_gate" ? "freshness gate" :
+            item.metadata?.selectorCandidate ? "candidate" : "");
         tr.appendChild(cell(selectorStatus));
         tr.appendChild(cell(item.publishedAt || ""));
         tr.appendChild(cell(item.wordCount));
@@ -4858,6 +4861,7 @@ app.get("/feed", async (req, res) => {
     let freshSelectedCount = 0;
     let staleFallbackSelectedCount = 0;
     const feedSelectorStats = [];
+    const feedSelectorInputKeys = new Set();
     const selectedArticles = [];
     const seenArticleKeys = new Set();
     const topicAuditItems = [];
@@ -5073,9 +5077,21 @@ app.get("/feed", async (req, res) => {
           const rightRank = Number(right.providerRank || Number.MAX_SAFE_INTEGER);
           return leftRank - rightRank;
         });
+        const freshCandidates = candidates.filter((article) =>
+          isFreshEnoughArticle(article, now)
+        );
+        const useFreshOnlyCandidates =
+          FEED_SELECTOR_FRESH_ONLY &&
+          freshCandidates.length >= FEED_PER_TOPIC_TARGET;
+        const selectorCandidates = useFreshOnlyCandidates
+          ? freshCandidates
+          : candidates;
+        selectorCandidates.forEach((article) => {
+          feedSelectorInputKeys.add(articleAuditKey(article));
+        });
         const selection = await selectFeedArticlesForTopic({
           topic,
-          articles: candidates,
+          articles: selectorCandidates,
           targetCount: FEED_PER_TOPIC_TARGET,
           nowMs: now
         });
@@ -5086,6 +5102,12 @@ app.get("/feed", async (req, res) => {
           fallbackUsed: Boolean(selection.fallbackUsed),
           error: selection.error || null,
           candidateCount: candidates.length,
+          selectorInputCount: selectorCandidates.length,
+          freshCandidateCount: freshCandidates.length,
+          staleCandidateCount: candidates.length - freshCandidates.length,
+          freshOnlyApplied: useFreshOnlyCandidates,
+          freshOnlyBypassed:
+            FEED_SELECTOR_FRESH_ONLY && !useFreshOnlyCandidates,
           selectedCount: selection.selected.length
         });
 
@@ -5132,6 +5154,12 @@ app.get("/feed", async (req, res) => {
         }
       } else if (item.eligibleForFeed && item.metadata.selectorCandidate === false) {
         item.skipReason = "candidate_pool_full";
+      } else if (
+        item.eligibleForFeed &&
+        item.metadata.selectorCandidate &&
+        !feedSelectorInputKeys.has(item.auditKey)
+      ) {
+        item.skipReason = "freshness_gate";
       } else if (item.eligibleForFeed && !item.skipReason) {
         item.skipReason = isBalancedAllRequest
           ? "feed_selector_rejected"

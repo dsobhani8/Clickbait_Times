@@ -9,6 +9,10 @@ const FEED_SELECTOR_METHOD =
   process.env.FEED_SELECTOR_METHOD || "llm_bucket_selector_v1";
 const FEED_SELECTOR_ENABLED =
   String(process.env.FEED_SELECTOR_ENABLED || "true").toLowerCase() !== "false";
+const FEED_SELECTOR_FRESH_ONLY =
+  !["0", "false", "no", "off"].includes(
+    String(process.env.FEED_SELECTOR_FRESH_ONLY || "true").toLowerCase()
+  );
 const FEED_SELECTOR_TIMEOUT_MS_RAW = Number(
   process.env.FEED_SELECTOR_TIMEOUT_MS || 45000
 );
@@ -47,8 +51,9 @@ const FEED_SELECTOR_SYSTEM_PROMPT = [
   '- "World": non-US public-interest hard news after ruling out Politics and Economy. Prefer war, military, diplomacy, major disasters, institutions, technology, public safety, and international crises over sports or entertainment.',
   "",
   "Freshness:",
-  "- Prefer fresher articles when quality is similar.",
-  "- A slightly older hard-news article is better than a fresh sports, celebrity, entertainment, or lifestyle article.",
+  "- Freshness is usually enforced before you receive the candidate list.",
+  "- If stale candidates are present, it means there were not enough fresh candidates to fill the topic target.",
+  "- Prefer fresh candidates unless a stale candidate is needed to avoid underfilling the topic.",
   "",
   "Output requirements:",
   "- Return exactly one JSON object and no other text.",
@@ -354,6 +359,7 @@ async function selectFeedArticlesForTopic({
 module.exports = {
   FEED_SELECTOR_CANDIDATES_PER_TOPIC,
   FEED_SELECTOR_ENABLED,
+  FEED_SELECTOR_FRESH_ONLY,
   FEED_SELECTOR_METHOD,
   FEED_SELECTOR_MODEL,
   selectFeedArticlesForTopic
