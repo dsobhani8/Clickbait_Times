@@ -1223,6 +1223,35 @@ const findTopicAuditRunByIdStmt = db.prepare(`
   LIMIT 1
 `);
 
+const findTopicAuditRunBySnapshotIdStmt = db.prepare(`
+  SELECT
+    id,
+    created_at,
+    snapshot_date,
+    category,
+    limit_count,
+    provider,
+    source_uri,
+    classifier_method,
+    classifier_model,
+    classifier_batch_size,
+    feed_per_topic_target,
+    fresh_article_max_age_hours,
+    pages_fetched,
+    fetched_count,
+    audited_count,
+    eligible_count,
+    selected_count,
+    snapshot_id,
+    status,
+    error_message,
+    metadata_json
+  FROM topic_classification_audit_runs
+  WHERE snapshot_id = @snapshotId
+  ORDER BY created_at DESC, id DESC
+  LIMIT 1
+`);
+
 const listTopicAuditItemsStmt = db.prepare(`
   SELECT
     id,
@@ -3583,6 +3612,50 @@ async function getTopicAuditRunById(runId) {
   return rowToTopicAuditRun(result.rows?.[0]);
 }
 
+async function getTopicAuditRunBySnapshotId(snapshotId) {
+  const id = Number(snapshotId);
+  if (!Number.isFinite(id) || id <= 0) {
+    return null;
+  }
+  if (!POSTGRES_ENABLED) {
+    return rowToTopicAuditRun(
+      findTopicAuditRunBySnapshotIdStmt.get({ snapshotId: Math.round(id) })
+    );
+  }
+  const result = await pgQuery(
+    `
+      SELECT
+        id,
+        created_at,
+        snapshot_date,
+        category,
+        limit_count,
+        provider,
+        source_uri,
+        classifier_method,
+        classifier_model,
+        classifier_batch_size,
+        feed_per_topic_target,
+        fresh_article_max_age_hours,
+        pages_fetched,
+        fetched_count,
+        audited_count,
+        eligible_count,
+        selected_count,
+        snapshot_id,
+        status,
+        error_message,
+        metadata_json
+      FROM topic_classification_audit_runs
+      WHERE snapshot_id = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `,
+    [Math.round(id)]
+  );
+  return rowToTopicAuditRun(result.rows?.[0]);
+}
+
 async function getLatestTopicAuditRun() {
   const runs = await listTopicAuditRuns(1);
   return Array.isArray(runs) && runs.length > 0 ? runs[0] : null;
@@ -4177,10 +4250,10 @@ app.get("/admin/topic-audit", (_req, res) => {
 <body>
   <main>
     <h1>${escapeHtml(title)}</h1>
-    <p>Shows the saved topic classification and feed-selector audit from the latest feed rebuild. It does not rebuild or reclassify anything.</p>
+    <p>Shows the saved topic classification and feed-selector audit for the current published feed by default. Enter a run ID to inspect a specific rebuild attempt.</p>
     <form id="controls">
       <label>Admin token <input id="token" name="token" type="password" autocomplete="off" placeholder="PIPELINE_ADMIN_TOKEN" /></label>
-      <label>Run ID <input id="runId" name="runId" type="number" min="1" placeholder="latest" /></label>
+      <label>Run ID <input id="runId" name="runId" type="number" min="1" placeholder="current feed" /></label>
       <label>Topic
         <select id="topicFilter" name="topicFilter">
           <option value="All">All topics</option>
@@ -4438,7 +4511,7 @@ app.get("/admin/topic-audit", (_req, res) => {
       const runId = document.getElementById("runId").value.trim();
       const url = runId
         ? "/admin/topic-audit/runs/" + encodeURIComponent(runId)
-        : "/admin/topic-audit/runs/latest";
+        : "/admin/topic-audit/runs/current";
 
       try {
         const response = await fetch(url, {
@@ -4498,6 +4571,48 @@ app.get("/admin/topic-audit/runs/latest", async (req, res) => {
     ok: true,
     run,
     articles
+  });
+});
+
+app.get("/admin/topic-audit/runs/current", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+
+  const category = normalizeRequestedCategory(req.query.category);
+  const defaultLimit = resolveDefaultFeedLimit(category);
+  const limitRaw = Number(req.query.limit ?? defaultLimit);
+  const limitCount = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(50, Math.round(limitRaw)))
+    : defaultLimit;
+  const provider = "newsapi_ai";
+  const currentSnapshot = await getCurrentPublishedSnapshot({
+    category,
+    limitCount,
+    provider
+  });
+  const run = currentSnapshot
+    ? await getTopicAuditRunBySnapshotId(currentSnapshot.snapshotId)
+    : null;
+  const articles = run ? await listTopicAuditItems(run.id) : [];
+
+  return res.json({
+    ok: true,
+    run,
+    articles,
+    currentSnapshot: currentSnapshot
+      ? {
+          snapshotId: currentSnapshot.snapshotId,
+          snapshotDate: currentSnapshot.snapshotDate,
+          status: currentSnapshot.status,
+          count: Array.isArray(currentSnapshot.articles)
+            ? currentSnapshot.articles.length
+            : 0
+        }
+      : null
   });
 });
 
