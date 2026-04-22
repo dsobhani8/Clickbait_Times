@@ -1484,6 +1484,36 @@ function articleAuditKey(article) {
   return `${article?.title || ""}::${article?.publishedAt || ""}`;
 }
 
+function optionalString(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function buildTopicAuditItemMetadata(article, options = {}) {
+  const metadata = {};
+  if (!options.includeOriginalArticle) {
+    return metadata;
+  }
+
+  const body = Array.isArray(article?.body)
+    ? article.body.filter((entry) => typeof entry === "string" && entry.length > 0)
+    : [];
+
+  metadata.originalArticle = {
+    title: optionalString(article?.title) || "",
+    lead: optionalString(article?.lead),
+    body,
+    image: optionalString(article?.image),
+    source: {
+      name: optionalString(article?.source?.name),
+      uri: optionalString(article?.source?.uri),
+      articleUri: optionalString(article?.source?.articleUri)
+    },
+    publishedAt: optionalString(article?.publishedAt)
+  };
+
+  return metadata;
+}
+
 function parseJsonRecord(value) {
   if (typeof value !== "string" || value.trim().length === 0) {
     return {};
@@ -1554,6 +1584,93 @@ function rowToTopicAuditItem(row) {
     classifierStatus: row.classifier_status || "",
     fallbackUsed: toBoolean(row.fallback_used),
     metadata: parseJsonRecord(row.metadata_json)
+  };
+}
+
+function buildTopicAuditOriginalsExport({
+  run,
+  articles,
+  currentSnapshot = null,
+  includeWordCountItems = false
+}) {
+  const items = Array.isArray(articles) ? articles : [];
+  const filteredItems = includeWordCountItems
+    ? items
+    : items.filter((item) => item.lengthOk);
+  const exportedArticles = filteredItems.map((item) => {
+    const metadata = isRecord(item.metadata) ? item.metadata : {};
+    const originalArticle = isRecord(metadata.originalArticle)
+      ? metadata.originalArticle
+      : {};
+    const body = Array.isArray(originalArticle.body)
+      ? originalArticle.body.filter(
+          (entry) => typeof entry === "string" && entry.length > 0
+        )
+      : [];
+    const bodyText =
+      typeof originalArticle.bodyText === "string" &&
+      originalArticle.bodyText.length > 0
+        ? originalArticle.bodyText
+        : body.join("\n\n");
+
+    return {
+      auditItemId: item.id,
+      providerRank: item.providerRank,
+      articleId: item.articleId,
+      original: {
+        title: item.title || originalArticle.title || "",
+        lead: item.lead || originalArticle.lead || "",
+        body,
+        bodyText,
+        image: originalArticle.image || null,
+        source: isRecord(originalArticle.source)
+          ? {
+              name: originalArticle.source.name || null,
+              uri: originalArticle.source.uri || null,
+              articleUri: originalArticle.source.articleUri || null
+            }
+          : null,
+        publishedAt: item.publishedAt || originalArticle.publishedAt || null
+      },
+      bodyAvailable: body.length > 0 || bodyText.length > 0,
+      topicClassification: item.classification,
+      feedSelector: {
+        eligibleForFeed: item.eligibleForFeed,
+        selectedForSnapshot: item.selectedForSnapshot,
+        status: item.skipReason || "",
+        selectorCandidate: metadata.selectorCandidate ?? null,
+        selectorReason: metadata.feedSelectorReason || null
+      },
+      auditMetadata: {
+        wordCount: item.wordCount,
+        lengthOk: item.lengthOk,
+        isFresh: item.isFresh,
+        classifierStatus: item.classifierStatus,
+        fallbackUsed: item.fallbackUsed
+      }
+    };
+  });
+
+  const bodyAvailableCount = exportedArticles.filter(
+    (article) => article.bodyAvailable
+  ).length;
+
+  return {
+    ok: true,
+    exportedAt: new Date().toISOString(),
+    run,
+    currentSnapshot,
+    includedWordCountFailures: includeWordCountItems,
+    excludedWordCountFailureCount: includeWordCountItems
+      ? 0
+      : items.filter((item) => !item.lengthOk).length,
+    bodyAvailableCount,
+    bodyMissingCount: exportedArticles.length - bodyAvailableCount,
+    note:
+      bodyAvailableCount === 0
+        ? "This audit run does not include full article bodies. Rebuild with auditBody=1 and an admin token, then export again."
+        : undefined,
+    articles: exportedArticles
   };
 }
 
@@ -4616,6 +4733,76 @@ app.get("/admin/topic-audit/runs/current", async (req, res) => {
   });
 });
 
+app.get("/admin/topic-audit/runs/current/export-originals", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+
+  const category = normalizeRequestedCategory(req.query.category);
+  const defaultLimit = resolveDefaultFeedLimit(category);
+  const limitRaw = Number(req.query.limit ?? defaultLimit);
+  const limitCount = Number.isFinite(limitRaw)
+    ? Math.max(1, Math.min(50, Math.round(limitRaw)))
+    : defaultLimit;
+  const provider = "newsapi_ai";
+  const currentSnapshot = await getCurrentPublishedSnapshot({
+    category,
+    limitCount,
+    provider
+  });
+  const run = currentSnapshot
+    ? await getTopicAuditRunBySnapshotId(currentSnapshot.snapshotId)
+    : null;
+  const articles = run ? await listTopicAuditItems(run.id) : [];
+  const includeWordCountItems = String(req.query.includeWordCount || "") === "1";
+
+  return res.json(
+    buildTopicAuditOriginalsExport({
+      run,
+      articles,
+      includeWordCountItems,
+      currentSnapshot: currentSnapshot
+        ? {
+            snapshotId: currentSnapshot.snapshotId,
+            snapshotDate: currentSnapshot.snapshotDate,
+            status: currentSnapshot.status,
+            count: Array.isArray(currentSnapshot.articles)
+              ? currentSnapshot.articles.length
+              : 0
+          }
+        : null
+    })
+  );
+});
+
+app.get("/admin/topic-audit/runs/:runId/export-originals", async (req, res) => {
+  if (!isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "Unauthorized admin request."
+    });
+  }
+  const run = await getTopicAuditRunById(req.params.runId);
+  if (!run) {
+    return res.status(404).json({
+      ok: false,
+      error: "Topic audit run not found."
+    });
+  }
+  const articles = await listTopicAuditItems(run.id);
+  const includeWordCountItems = String(req.query.includeWordCount || "") === "1";
+  return res.json(
+    buildTopicAuditOriginalsExport({
+      run,
+      articles,
+      includeWordCountItems
+    })
+  );
+});
+
 app.get("/admin/topic-audit/runs/:runId", async (req, res) => {
   if (!isAdminRequestAuthorized(req)) {
     return res.status(401).json({
@@ -4764,6 +4951,13 @@ app.get("/admin/topic-audit/data", async (req, res) => {
 app.get("/feed", async (req, res) => {
   const category = normalizeRequestedCategory(req.query.category);
   const debugRequested = String(req.query.debug || "") === "1";
+  const auditBodyRequested = String(req.query.auditBody || "") === "1";
+  if (auditBodyRequested && !isAdminRequestAuthorized(req)) {
+    return res.status(401).json({
+      ok: false,
+      error: "auditBody=1 requires an authorized admin request."
+    });
+  }
   const requestedTopicTargets = resolveRequestedTopicTargets(category);
   const rawLimitParam = req.query.limit;
   const hasExplicitLimit =
@@ -5160,7 +5354,9 @@ app.get("/feed", async (req, res) => {
                   : "out_of_target",
             classifierStatus: "classified",
             fallbackUsed: false,
-            metadata: {}
+            metadata: buildTopicAuditItemMetadata(candidate, {
+              includeOriginalArticle: auditBodyRequested
+            })
           };
           topicAuditItems.push(auditItem);
           if (topic === TOPIC_NONE) {
@@ -5398,6 +5594,7 @@ app.get("/feed", async (req, res) => {
           skippedOutOfTarget,
           freshSelectedCount,
           staleFallbackSelectedCount,
+          auditBodyIncluded: auditBodyRequested,
           feedSelectorStats
         },
         items: topicAuditItems
@@ -5506,6 +5703,7 @@ app.get("/feed", async (req, res) => {
         toneRewriteQueued,
         rewriteJobStats: rewriteStats,
         topicAuditRunId: auditResult.auditRunId,
+        auditBodyIncluded: auditBodyRequested,
         refreshRequested,
         rebuildRequested,
         freshnessPolicy: "fresh_first_with_stale_fallback",
@@ -5562,6 +5760,7 @@ app.get("/feed", async (req, res) => {
         skippedOutOfTarget,
         freshSelectedCount,
         staleFallbackSelectedCount,
+        auditBodyIncluded: auditBodyRequested,
         feedSelectorStats
       },
       items: topicAuditItems
@@ -5610,6 +5809,7 @@ app.get("/feed", async (req, res) => {
         refreshRequested,
         fallbackUsed: true,
         topicAuditRunId: auditResult.auditRunId,
+        auditBodyIncluded: auditBodyRequested,
         topicTargets: requestedTopicTargets,
         perTopicTarget,
         countsByTopic: fallbackCountsByTopic,
@@ -5643,6 +5843,7 @@ app.get("/feed", async (req, res) => {
       snapshotDate,
       refreshRequested,
       topicAuditRunId: auditResult.auditRunId,
+      auditBodyIncluded: auditBodyRequested,
       topicTargets: requestedTopicTargets,
       perTopicTarget,
       countsByTopic: emptyCountsByTopic,
